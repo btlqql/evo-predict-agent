@@ -11,7 +11,7 @@ _RULES: list[tuple[str, str]] = [
     (r"api|schema|contract|json|payload|response", "api-contract"),
     (r"database|sql|postgres|supabase|migration|prisma", "database"),
     (r"permission|forbidden|\b403\b|policy|role", "permission"),
-    (r"performance|slow|latency|cost|token|memory", "performance"),
+    (r"performance|slow|latency|cost|token-cost|memory", "performance"),
     (r"ui|css|layout|component|react|tailwind", "frontend-ui"),
 ]
 
