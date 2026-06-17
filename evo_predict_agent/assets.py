@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .hash_utils import compute_asset_id
+from .evomap_gep import official_schema_version, stamp_asset
 
-SCHEMA_VERSION = "1.0.0-local"
+SCHEMA_VERSION = official_schema_version()
 
 DEFAULT_GENES = [
     {
@@ -80,7 +80,7 @@ class AssetStore:
             genes = []
             for g in DEFAULT_GENES:
                 gg = dict(g)
-                gg["asset_id"] = compute_asset_id(gg)
+                gg = stamp_asset(gg)
                 genes.append(gg)
             self.genes_path.write_text(json.dumps(genes, ensure_ascii=False, indent=2), encoding="utf-8")
         if not self.capsules_path.exists():
@@ -99,7 +99,7 @@ class AssetStore:
         cap = dict(capsule)
         cap.setdefault("type", "Capsule")
         cap.setdefault("schema_version", SCHEMA_VERSION)
-        cap["asset_id"] = compute_asset_id(cap)
+        cap = stamp_asset(cap)
         capsules = self.load_capsules()
         if not any(c.get("asset_id") == cap["asset_id"] for c in capsules):
             capsules.append(cap)

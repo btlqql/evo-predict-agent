@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gep": {
+      "command": "npx",
+      "args": ["-y", "@evomap/gep-mcp-server"],
+      "env": {
+        "GEP_ASSETS_DIR": "/Users/wangyue/evo/evo-predict-agent/assets",
+        "GEP_MEMORY_DIR": "/Users/wangyue/evo/evo-predict-agent/memory/evolution"
+      }
+    }
+  }
+}

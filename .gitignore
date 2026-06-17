@@ -11,3 +11,4 @@ assets/generated/
 memory/
 assets/genes.json
 assets/capsules.json
+node_modules/

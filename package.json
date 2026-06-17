@@ -1,0 +1,16 @@
+{
+  "name": "evo-predict-agent-gep-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "EvoMap GEP bridge for evo-predict-agent.",
+  "scripts": {
+    "gep:info": "node scripts/gep_bridge.mjs info",
+    "gep:stamp": "node scripts/gep_bridge.mjs stamp",
+    "mcp:local": "GEP_ASSETS_DIR=$PWD/assets GEP_MEMORY_DIR=$PWD/memory/evolution npx -y @evomap/gep-mcp-server"
+  },
+  "dependencies": {
+    "@evomap/gep-sdk": "latest",
+    "@evomap/gep-mcp-server": "latest"
+  }
+}

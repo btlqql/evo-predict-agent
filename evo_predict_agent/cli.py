@@ -12,6 +12,7 @@ from .memory import JsonlMemory
 from .predictor import AutoMLPredictor
 from .pre_evolver import build_pre_evolution_card
 from .signals import extract_signals, default_family_from_signals
+from .evomap_gep import gep_info, verify_asset
 
 ROOT = Path.cwd()
 MEMORY_DIR = ROOT / "memory"
@@ -159,6 +160,40 @@ def cmd_demo(args):
     cmd_pre_evolve(argparse.Namespace(context="I changed app/api/auth/callback and now login returns 401 unauthorized after token refresh"))
 
 
+
+def cmd_gep_info(_args):
+    print(json.dumps(gep_info(), ensure_ascii=False, indent=2))
+
+
+def cmd_export_gep(args):
+    store = AssetStore(ASSETS_DIR)
+    store.init_defaults()
+    genes = store.load_genes()
+    capsules = store.load_capsules()
+    bundle = {
+        "protocol": "gep-a2a",
+        "protocol_version": "1.0.0",
+        "message_type": "local_export",
+        "payload": {
+            "assets": genes + capsules,
+            "source": "evo-predict-agent",
+            "note": "Local-only export. Not published to EvoMap Hub."
+        }
+    }
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({"ok": True, "out": str(out), "genes": len(genes), "capsules": len(capsules)}, ensure_ascii=False, indent=2))
+
+
+def cmd_verify_assets(_args):
+    store = AssetStore(ASSETS_DIR)
+    store.init_defaults()
+    assets = store.load_genes() + store.load_capsules()
+    results = [{"id": a.get("id"), "type": a.get("type"), **verify_asset(a)} for a in assets]
+    print(json.dumps({"ok": all(r.get("ok") for r in results), "results": results}, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="evo-predict")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -183,6 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--summary", default="")
     sp.set_defaults(func=cmd_record_outcome)
     sp = sub.add_parser("status"); sp.set_defaults(func=cmd_status)
+    sp = sub.add_parser("gep-info"); sp.set_defaults(func=cmd_gep_info)
+    sp = sub.add_parser("export-gep"); sp.add_argument("--out", default="memory/gep_bundle.local.json"); sp.set_defaults(func=cmd_export_gep)
+    sp = sub.add_parser("verify-assets"); sp.set_defaults(func=cmd_verify_assets)
     sp = sub.add_parser("demo"); sp.set_defaults(func=cmd_demo)
     return p
 

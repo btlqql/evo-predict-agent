@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .assets import AssetStore
-from .hash_utils import compute_asset_id
+from .evomap_gep import stamp_asset
 
 
 def build_pre_evolution_card(*, context: str, signals: list[str], prediction, store: AssetStore) -> dict:
@@ -36,7 +36,7 @@ def build_pre_evolution_card(*, context: str, signals: list[str], prediction, st
         ],
         "prepared_prompt": build_prompt(context, signals, prediction.family, gene, capsules),
     }
-    card["asset_id"] = compute_asset_id(card)
+    card = stamp_asset(card)
     return card
 
 

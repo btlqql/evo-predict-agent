@@ -58,3 +58,40 @@ python -m evo_predict_agent.cli status
 - `Trajectory`：可审计过程
 
 不复制比赛数据，不改比赛代码。
+
+## EvoMap 技术栈接入
+
+这个仓库现在不是只“借概念”，而是接了 EvoMap 官方本地技术栈：
+
+- `@evomap/gep-sdk`：官方 GEP schema version、content hash、asset id。
+- `@evomap/gep-mcp-server`：本地 MCP GEP server，可用本项目的 `assets/` 和 `memory/evolution/`。
+- `scripts/gep_bridge.mjs`：Python agent 与官方 Node GEP SDK 的桥。
+
+安装 Node 依赖：
+
+```bash
+npm install
+npm run gep:info
+```
+
+Python 侧验证：
+
+```bash
+python3 -m evo_predict_agent.cli gep-info
+python3 -m evo_predict_agent.cli verify-assets
+python3 -m evo_predict_agent.cli export-gep --out memory/gep_bundle.local.json
+```
+
+启动本地 GEP MCP Server：
+
+```bash
+npm run mcp:local
+```
+
+MCP 配置示例：
+
+```text
+.mcp/gep-local.json
+```
+
+默认仍然 **不联网、不 publish、不上传 Hub**。如果后续要接 EvoMap Hub，再显式配置 `EVOMAP_NODE_ID / EVOMAP_NODE_SECRET / EVOMAP_API_KEY`。
