@@ -49,7 +49,7 @@ Goal: one shared semantic contract before ML / instruction / workflow evolution.
   - [x] `confidence`
 - [x] Update `extractSignals()` to derive from semantic parser
 - [x] Add API response field `semantic`
-- [ ] Show semantic parser output on frontend
+- [x] Show semantic parser output on frontend
 
 ## Priority 2 — Three Evolution Layers
 
@@ -220,6 +220,6 @@ Tasks:
 
 1. ~~Implement `semantic.ts`.~~ Done.
 2. ~~Return `semantic` from `/api/interactions/analyze`.~~ Done.
-3. Show semantic parser output on frontend.
+3. ~~Show semantic parser output on frontend.~~ Done.
 4. Implement `evolution.ts` composer.
 5. Extend MCP tools with workflow/evolution bundle APIs. `evomate_parse_semantics` is done.
