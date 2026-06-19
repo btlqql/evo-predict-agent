@@ -409,9 +409,9 @@ function HeroPanel({ result, activeGene, reward, delta }: { result: AnalyzeResul
           </div>
 
           <div className="mt-8 grid max-w-3xl gap-3 md:grid-cols-4">
-            <MetricBox label="LLM Parse" value={result.llmUsed ? 'EvoMap' : 'Seed rules'} />
-            <MetricBox label="Intent" value={result.llmIntent} />
-            <MetricBox label="Confidence" value={result.llmConfidence == null ? '--' : `${(result.llmConfidence * 100).toFixed(0)}%`} />
+            <MetricBox label="Semantic Parse" value={result.llmUsed ? 'EvoMap LLM' : 'Seed rules'} />
+            <MetricBox label="Intent" value={result.semantic.intent} />
+            <MetricBox label="Confidence" value={result.llmConfidence == null ? `${(result.semantic.confidence * 100).toFixed(0)}%` : `${(result.llmConfidence * 100).toFixed(0)}%`} />
             <MetricBox label="Delta" value={`${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)}%`} tone={delta >= 0 ? 'mint' : 'red'} />
           </div>
 
@@ -468,7 +468,47 @@ function RuntimePipeline({ result, activeGene, assets }: { result: AnalyzeResult
           </div>
         ))}
       </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="rounded-2xl border border-[#19e6ff]/15 bg-[#19e6ff]/[0.035] p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.22em] text-[#19e6ff]/70">Semantic Contract</p>
+              <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-white">{result.semantic.intent}</p>
+            </div>
+            <span className="rounded-full border border-[#83f3b1]/20 bg-[#83f3b1]/10 px-3 py-1 text-xs text-[#83f3b1]">
+              {(result.semantic.confidence * 100).toFixed(0)}% parsed
+            </span>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <MetricBox label="Permission" value={result.semantic.permissionMode} />
+            <MetricBox label="Tone" value={result.semantic.userTone} />
+            <MetricBox label="Risk" value={result.semantic.riskLevel} />
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+          <p className="text-xs uppercase tracking-[0.22em] text-white/30">Routed into 3 layers</p>
+          <div className="mt-3 space-y-2">
+            <SemanticRoute label="Behavior" value={result.semantic.workstyleSignals.join(', ') || 'neutral collaboration policy'} />
+            <SemanticRoute label="Instruction" value={result.semantic.feedbackSemantics?.correctionType || result.semantic.feedbackSemantics?.sentiment || 'no durable correction yet'} />
+            <SemanticRoute label="Workflow" value={result.semantic.toolNeeds.join(', ') || 'default answer workflow'} />
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {[...result.semantic.domainSignals, ...result.semantic.toolNeeds].slice(0, 8).map((item) => (
+          <span key={item} className="rounded-full border border-white/[0.08] bg-white/[0.035] px-3 py-1.5 text-xs text-white/48">{item}</span>
+        ))}
+      </div>
     </section>
+  );
+}
+
+function SemanticRoute({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[88px_1fr] gap-3 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2.5">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-white/32">{label}</p>
+      <p className="truncate text-xs text-white/62">{value}</p>
+    </div>
   );
 }
 
@@ -630,11 +670,81 @@ function mockAnalyze(text: string, previousYesness: number): AnalyzeResult {
     signals: [...signals],
     taskType: signals.has('coding_task') ? 'coding' : signals.has('roadshow_planning') ? 'product' : 'general',
     riskLevel: signals.has('permission_sensitive') ? 'medium' : 'low',
+    semantic: mockSemantic(text, [...signals]),
     source: 'demo',
     llmUsed: false,
     llmIntent: 'simulated agent event classification',
-    llmConfidence: null
+    llmConfidence: 0.68
   };
+}
+
+function normalizeSemantic(value: unknown, fallback: Pick<SemanticResult, 'signals' | 'taskType' | 'riskLevel'>): SemanticResult {
+  const item = value && typeof value === 'object' ? value as Partial<SemanticResult> : {};
+  return {
+    taskType: asString(item.taskType, fallback.taskType),
+    intent: asString(item.intent, 'general_help'),
+    riskLevel: asString(item.riskLevel, fallback.riskLevel),
+    permissionMode: asString(item.permissionMode, fallback.riskLevel === 'high' ? 'ask_before_editing' : 'unknown'),
+    userTone: asString(item.userTone, 'neutral'),
+    workstyleSignals: asStringArray(item.workstyleSignals),
+    domainSignals: asStringArray(item.domainSignals),
+    toolNeeds: asStringArray(item.toolNeeds),
+    feedbackSemantics: item.feedbackSemantics && typeof item.feedbackSemantics === 'object'
+      ? {
+          sentiment: asString(item.feedbackSemantics.sentiment, 'neutral'),
+          correctionType: typeof item.feedbackSemantics.correctionType === 'string' ? item.feedbackSemantics.correctionType : undefined,
+          rewardHint: typeof item.feedbackSemantics.rewardHint === 'number' ? item.feedbackSemantics.rewardHint : 0
+        }
+      : null,
+    signals: asStringArray(item.signals).length ? asStringArray(item.signals) : fallback.signals,
+    confidence: typeof item.confidence === 'number' ? clamp(item.confidence, 0, 1) : 0.52
+  };
+}
+
+function mockSemantic(text: string, signals: string[]): SemanticResult {
+  const wantsCaution = /先|别|不要|乱动|看看|read-only/i.test(text);
+  const wantsFrontend = /前端|界面|ui|视觉|布局|dashboard/i.test(text);
+  const wantsRoadshow = /路演|demo|评委|黑客松/i.test(text);
+  const wantsML = /机器学习|ml|policy|reward|进化/i.test(text);
+  const isNegative = /不是|不对|丑|错|你干啥|别乱动|太像|难看|不行/.test(text);
+
+  return {
+    taskType: signals.includes('coding_task') ? 'coding' : wantsRoadshow ? 'product' : 'general',
+    intent: wantsCaution
+      ? 'analysis_before_execution'
+      : wantsFrontend
+        ? 'frontend_iteration'
+        : wantsRoadshow
+          ? 'roadshow_packaging'
+          : wantsML
+            ? 'ml_optimization'
+            : 'direct_execution',
+    riskLevel: wantsCaution ? 'medium' : 'low',
+    permissionMode: wantsCaution ? 'ask_before_editing' : 'safe_to_execute',
+    userTone: /快|啥几把|别废话/.test(text) ? 'impatient' : wantsCaution ? 'cautious' : 'direct',
+    workstyleSignals: wantsCaution ? ['prefers_analysis_before_execution'] : ['wants_forward_progress'],
+    domainSignals: [
+      signals.includes('evomap_integration') ? 'evomap' : '',
+      signals.includes('ml_policy') ? 'ml_policy' : '',
+      signals.includes('mcp_native') ? 'mcp' : ''
+    ].filter(Boolean),
+    toolNeeds: [
+      signals.includes('coding_task') ? 'repo_inspection' : '',
+      wantsFrontend ? 'frontend_iteration' : '',
+      wantsRoadshow ? 'roadshow_packaging' : ''
+    ].filter(Boolean),
+    feedbackSemantics: isNegative ? { sentiment: 'negative', correctionType: wantsFrontend ? 'layout_mismatch' : 'execution_mismatch', rewardHint: -0.65 } : null,
+    signals,
+    confidence: 0.68
+  };
+}
+
+function asString(value: unknown, fallback: string) {
+  return typeof value === 'string' && value ? value : fallback;
+}
+
+function asStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
 }
 
 function formatReward(value: number) {
