@@ -1,18 +1,33 @@
 {
-  "name": "evo-predict-agent-gep-bridge",
+  "name": "evomate-platform",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "EvoMap GEP bridge for evo-predict-agent.",
+  "description": "MCP-native EvoMap-powered self-evolving assistant platform.",
   "scripts": {
     "gep:info": "node scripts/gep_bridge.mjs info",
     "gep:stamp": "node scripts/gep_bridge.mjs stamp",
     "mcp:local": "GEP_ASSETS_DIR=$PWD/assets GEP_MEMORY_DIR=$PWD/memory/evolution npx -y @evomap/gep-mcp-server",
-    "gep:schema-validate": "node scripts/gep_bridge.mjs validate-schema"
+    "gep:schema-validate": "node scripts/gep_bridge.mjs validate-schema",
+    "evomate:api": "npm run dev -w apps/api",
+    "evomate:web": "npm run dev -w apps/web",
+    "evomate:mcp": "npm run dev -w packages/evomate-mcp",
+    "evomate:check": "npm run check --workspaces --if-present",
+    "test:python": "python3 -m unittest discover -s tests -v",
+    "check": "npm run gep:schema-validate && npm run evomate:check && npm run test:python"
   },
   "dependencies": {
     "@evomap/gep-sdk": "latest",
     "@evomap/gep-mcp-server": "latest",
     "ajv": "^8.17.1"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
   }
 }

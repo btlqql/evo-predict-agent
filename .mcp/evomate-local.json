@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "gep": {
+      "command": "npx",
+      "args": ["-y", "@evomap/gep-mcp-server"],
+      "env": {
+        "GEP_ASSETS_DIR": "/Users/wangyue/evo/evo-predict-agent/assets",
+        "GEP_MEMORY_DIR": "/Users/wangyue/evo/evo-predict-agent/memory/evolution"
+      }
+    },
+    "evomate": {
+      "command": "npm",
+      "args": ["run", "evomate:mcp", "--silent"],
+      "env": {
+        "EVOMATE_STATE_DIR": "/Users/wangyue/evo/evo-predict-agent/memory/evomate"
+      }
+    }
+  }
+}
