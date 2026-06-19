@@ -22,3 +22,6 @@ out/
 dist/
 .turbo/
 *.tsbuildinfo
+
+# Claude Code local machine settings
+.claude/settings.local.json

@@ -1,0 +1,17 @@
+{
+  "name": "@evomate/sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "evomate-observe": "./src/observe.ts",
+    "evomate-advisor": "./src/advisor.ts",
+    "evomate-outcome": "./src/outcome.ts"
+  },
+  "scripts": {
+    "observe": "tsx src/observe.ts",
+    "advisor": "tsx src/advisor.ts",
+    "outcome": "tsx src/outcome.ts",
+    "check": "tsc -p tsconfig.json --noEmit"
+  }
+}

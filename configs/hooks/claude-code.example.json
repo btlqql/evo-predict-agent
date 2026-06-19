@@ -1,0 +1,22 @@
+{
+  "name": "evomate-claude-code-sidecar-template",
+  "description": "Template: add EvoMate as a non-blocking observer around Claude Code hook events. Adapt hook names to the installed Claude Code version.",
+  "env": {
+    "EVOMATE_API_URL": "http://localhost:8787",
+    "EVOMATE_HOOK_TIMEOUT_MS": "900"
+  },
+  "events": [
+    {
+      "hook": "UserPromptSubmit",
+      "command": "npm --silent run evomate:observe -- --source claude-code --event user_prompt_submit || true"
+    },
+    {
+      "hook": "PreToolUse",
+      "command": "npm --silent run evomate:advisor -- --source claude-code --event pre_tool_use --text || true"
+    },
+    {
+      "hook": "Stop",
+      "command": "npm --silent run evomate:outcome -- --source claude-code --event stop --outcome success || true"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)\"/.codex/hooks/evomate-codex-hook.sh observe session_start",
+            "timeout": 5,
+            "statusMessage": "EvoMate observing Codex session"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)\"/.codex/hooks/evomate-codex-hook.sh observe user_prompt_submit",
+            "timeout": 5,
+            "statusMessage": "EvoMate observing Codex prompt"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)\"/.codex/hooks/evomate-codex-hook.sh observe post_tool_use",
+            "timeout": 5,
+            "statusMessage": "EvoMate observing Codex tool result"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel)\"/.codex/hooks/evomate-codex-hook.sh observe stop",
+            "timeout": 5,
+            "statusMessage": "EvoMate recording Codex turn boundary"
+          }
+        ]
+      }
+    ]
+  }
+}

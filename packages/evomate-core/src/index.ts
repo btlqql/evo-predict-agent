@@ -315,6 +315,27 @@ export const EVOMATE_TECH_STACK = {
   storage: ['local JSON/JSONL', 'future Postgres/SQLite', '.gepx portability']
 } as const;
 
+
+export {
+  buildRemoteCommandPlan,
+  buildRemoteJobDataset,
+  createRemoteEvolutionJob,
+  defaultRemoteComputeTarget,
+  summarizeRemoteArtifacts
+} from './jobs.js';
+export type {
+  RemoteArtifactSummary,
+  RemoteCommandPlan,
+  RemoteComputeTarget,
+  RemoteEvolutionJob,
+  RemoteEvolutionJobInput,
+  RemoteJobDataset,
+  RemoteJobStatus,
+  RemoteJobType,
+  RemotePipelineStep,
+  RemoteWorkerArtifact
+} from './jobs.js';
+
 export { parseSemantics } from './semantic.js';
 export type {
   FeedbackSemantics,

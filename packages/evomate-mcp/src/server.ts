@@ -15,11 +15,13 @@ import {
   selectBehaviorGene,
   selectBehaviorGeneDecision,
   type EvolutionState,
-  type FeedbackInput
+  type FeedbackInput,
+  type RemoteJobType
 } from '@evomate/core';
 
 const STATE_DIR = resolve(process.env.EVOMATE_STATE_DIR || './memory/evomate');
 const STATE_FILE = resolve(STATE_DIR, 'evolution-state.json');
+const API_URL = (process.env.EVOMATE_API_URL || 'http://localhost:8787').replace(/\/$/, '');
 
 const server = new Server(
   {
@@ -91,6 +93,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: 'evomate_get_tech_stack',
       description: 'Return the recorded EvoMate technical stack and architecture commitments.',
       inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'evomate_submit_remote_evolution_job',
+      description: 'Submit a remote compute evolution job for policy replay, evolution gym, preference training, or embedding build.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['policy_replay_eval', 'evolution_gym_eval', 'preference_train', 'embedding_build'] },
+          objective: { type: 'string' },
+          executeRemote: { type: 'boolean', description: 'Set true only when the SSH worker should actually run instead of dry-run skeleton mode.' }
+        }
+      }
+    },
+    {
+      name: 'evomate_get_remote_job_status',
+      description: 'List remote compute jobs or fetch one remote job by jobId.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string' }
+        }
+      }
+    },
+    {
+      name: 'evomate_import_remote_artifacts',
+      description: 'Import remote worker artifacts back into EvoMate as an evolution bundle contract.',
+      inputSchema: {
+        type: 'object',
+        required: ['jobId'],
+        properties: {
+          jobId: { type: 'string' }
+        }
+      }
     }
   ]
 }));
@@ -160,6 +195,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return text(EVOMATE_TECH_STACK);
     }
 
+    if (name === 'evomate_submit_remote_evolution_job') {
+      const input = args as { type?: RemoteJobType; objective?: string; executeRemote?: boolean };
+      return text(await callApi('/api/remote-jobs/submit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: input.type || 'evolution_gym_eval',
+          objective: input.objective,
+          source: 'mcp_host',
+          executeRemote: input.executeRemote
+        })
+      }));
+    }
+
+    if (name === 'evomate_get_remote_job_status') {
+      const jobId = (args as { jobId?: string }).jobId;
+      return text(await callApi(jobId ? `/api/remote-jobs/${encodeURIComponent(jobId)}` : '/api/remote-jobs'));
+    }
+
+    if (name === 'evomate_import_remote_artifacts') {
+      const jobId = String((args as { jobId?: unknown }).jobId || '');
+      if (!jobId.trim()) return error('job_id_required');
+      return text(await callApi(`/api/remote-jobs/${encodeURIComponent(jobId)}/import`, { method: 'POST' }));
+    }
+
     return error(`unknown_tool:${name}`);
   } catch (err) {
     return error(err instanceof Error ? err.message : String(err));
@@ -188,6 +248,15 @@ function text(data: unknown) {
 
 function error(message: string) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }, null, 2) }], isError: true };
+}
+
+async function callApi(path: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(`${API_URL}${path}`, init);
+  const body = await response.json().catch(async () => ({ raw: await response.text().catch(() => '') }));
+  if (!response.ok) {
+    throw new Error(`evomate_api_${response.status}:${JSON.stringify(body).slice(0, 500)}`);
+  }
+  return body;
 }
 
 async function main() {

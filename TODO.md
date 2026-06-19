@@ -26,7 +26,7 @@ User Input / Feedback
 - [x] Frontend layout changed away from EvoMap homepage clone
 - [x] Frontend shows semantic-first three-layer architecture
 - [x] TypeScript checks pass
-- [ ] Fix any visual issues found in in-app browser review
+- [x] Fix responsive visual issues found in in-app browser review
 - [ ] Decide final roadshow first-screen copy
 
 ## Priority 1 — Semantic Parser
@@ -134,9 +134,15 @@ Claude Code / Codex / Cursor
 - [x] `evomate_predict_satisfaction`
 - [x] `evomate_get_evolution_state`
 - [x] Add `evomate_parse_semantics`
+- [x] Add non-blocking hook sidecar package for Codex / Claude Code / Cursor
+- [x] Add hook API endpoints:
+  - [x] `/api/agent-events/observe`
+  - [x] `/api/advisor/prepare`
+  - [x] `/api/agent-events/outcome`
+- [x] Add hook config templates in `configs/hooks/`
 - [ ] Add `evomate_select_workflow`
 - [ ] Add `evomate_compose_evolution_bundle`
-- [ ] Add MCP config examples for Claude Code / Codex / Cursor
+- [x] Add MCP / hook config examples for Claude Code / Codex / Cursor
 - [ ] Document host flow:
 
 ```text
@@ -145,6 +151,17 @@ Host receives user input
   -> call evomate_select_behavior_gene
   -> follow selected instruction/workflow
   -> record feedback/outcome
+```
+
+Current hook flow:
+
+```text
+Host session continues normally
+  -> sidecar observes prompt JSON or text
+  -> EvoMate selects Behavior Gene + Advisor Prompt
+  -> optional advisor injection if host supports it
+  -> sidecar records outcome
+  -> reward update writes EvoMap GEP assets
 ```
 
 ## Priority 5 — Better ML Optimization
@@ -183,7 +200,7 @@ Host receives user input
 Remote machine:
 
 ```text
-ssh -i /Users/wangyue/.ssh/id_ed25519 -o IdentitiesOnly=yes -p 9022 wzu@100.70.188.115
+ssh -i /path/to/ssh_key -o IdentitiesOnly=yes -p <port> <remote-user>@<remote-host>
 ```
 
 Verified:
@@ -198,12 +215,12 @@ GPU 2 × Tesla V100 32GB
 
 Tasks:
 
-- [ ] Sync repo to remote machine
-- [ ] Install dependencies with local/remote npm cache
-- [ ] Run API on remote
-- [ ] Run frontend on remote
-- [ ] Optionally expose demo through tunnel / reverse proxy
-- [ ] Prepare remote environment for embedding/preference experiments
+- [x] Create remote compute distribution skeleton
+- [x] Add remote job API + MCP tools
+- [x] Add Python remote worker skeleton
+- [x] Add deploy/remote bootstrap/sync/submit/import scripts
+- [x] Add frontend Remote Compute control panel
+- [x] Execute first real SSH remote job on GPU machine
 
 ## Priority 7 — Roadshow Packaging
 
@@ -211,7 +228,7 @@ Tasks:
 - [x] Yes Engineer positioning
 - [x] Yesness Score metric
 - [ ] 3-minute demo script
-- [ ] Slide architecture diagram
+- [x] Slide architecture diagram
 - [ ] Before/after agent behavior story
 - [ ] Visual proof: feedback changes behavior gene
 - [ ] Visual proof: EvolutionBundle maps to EvoMap assets
@@ -221,5 +238,42 @@ Tasks:
 1. ~~Implement `semantic.ts`.~~ Done.
 2. ~~Return `semantic` from `/api/interactions/analyze`.~~ Done.
 3. ~~Show semantic parser output on frontend.~~ Done.
-4. Implement `evolution.ts` composer.
-5. Extend MCP tools with workflow/evolution bundle APIs. `evomate_parse_semantics` is done.
+4. ~~Add non-blocking hook sidecar for existing coding agents.~~ Done.
+5. Implement `evolution.ts` composer.
+6. Extend MCP tools with workflow/evolution bundle APIs. `evomate_parse_semantics` is done.
+
+
+## Remote Compute Prototype Skeleton — Done
+
+- [x] Shared remote job schema in `packages/evomate-core/src/jobs.ts`
+- [x] API routes: `GET/POST /api/remote-jobs`
+- [x] MCP tools: submit/status/import remote evolution jobs
+- [x] Python worker: `evo_predict_agent/remote_worker.py`
+- [x] Deploy scripts in `deploy/remote/`
+- [x] Frontend Remote Compute panel
+- [x] Documentation: `docs/REMOTE_COMPUTE_DISTRIBUTION.md`
+- [ ] Real remote execution with `EVOMATE_REMOTE_EXECUTE=1`
+- [ ] Convert imported artifacts into official GEP asset writes through Evolution Composer
+
+
+### First Real Remote Run
+
+- Date: 2026-06-19
+- Job: `job_evolution_gym_eval_20260619090850_996f86`
+- Target: `<remote-user>@<remote-host>:<port>`
+- Worker: `python3 -m evo_predict_agent.remote_worker`
+- Status: imported
+- Artifacts:
+  - `policy_eval.json`
+  - `validation_report.json`
+  - `suggested_mutations.json`
+  - `evolution_bundle.json`
+- Result: baseline `0.61`, evolved `0.78`, improvement `+0.17` / `27.87%`
+
+
+## Responsive QA
+
+- [x] Responsive QA: 360/390/430/768/1024/1280/1440 widths
+- [x] No horizontal overflow across tested breakpoints
+- [x] Key panels visible: Semantic Contract, Remote Compute, GEP Asset Stream, Evolution Timeline
+- [x] Browser console has zero errors after refresh

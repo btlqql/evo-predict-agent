@@ -69,6 +69,23 @@ type RewardResult = {
   source: SourceMode;
 };
 
+type RemoteJob = {
+  jobId: string;
+  type: string;
+  status: string;
+  objective: string;
+  createdAt: string;
+  updatedAt: string;
+  artifactSummary?: {
+    generatedFiles?: string[];
+    validationScore?: number;
+    suggestedMutationCount?: number;
+    evolutionBundleId?: string;
+  };
+  target?: { host?: string; port?: number; user?: string; executeRemote?: boolean };
+  remotePlan?: { bootstrap?: string[]; sync?: string[]; submit?: string[]; import?: string[] };
+};
+
 type GepAsset = {
   type: string;
   id: string;
@@ -128,6 +145,9 @@ export default function Page() {
   const [result, setResult] = useState<AnalyzeResult>(defaultResult);
   const [reward, setReward] = useState<RewardResult | null>(null);
   const [assets, setAssets] = useState<GepAsset[]>(defaultAssets);
+  const [remoteJob, setRemoteJob] = useState<RemoteJob | null>(null);
+  const [remoteJobs, setRemoteJobs] = useState<RemoteJob[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
   const [timeline, setTimeline] = useState([
     'Codex session observed: user requested read-only repo analysis.',
     'Policy selected Safe Yes before agent execution.',
@@ -175,6 +195,85 @@ export default function Page() {
       addTimeline(`Demo observer selected ${next.geneId}.`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitRemoteJob() {
+    setRemoteLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/remote-jobs/submit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'evolution_gym_eval',
+          objective: 'Full remote evolution prototype: evaluate behavior policy, produce ValidationReport and EvolutionBundle.',
+          source: 'control_plane',
+          executeRemote: false
+        })
+      });
+      if (!res.ok) throw new Error('remote job api unavailable');
+      const data = await res.json();
+      setRemoteJob(data.job);
+      setRemoteJobs((current) => [data.job, ...current.filter((job) => job.jobId !== data.job.jobId)].slice(0, 4));
+      addTimeline(`Remote job ${data.job.jobId} queued in ${data.mode} mode.`);
+    } catch {
+      const mock = mockRemoteJob();
+      setRemoteJob(mock);
+      setRemoteJobs((current) => [mock, ...current].slice(0, 4));
+      addTimeline('Demo remote compute job queued locally.');
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function importRemoteArtifacts() {
+    if (!remoteJob) return;
+    setRemoteLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/remote-jobs/${encodeURIComponent(remoteJob.jobId)}/import`, { method: 'POST' });
+      if (!res.ok) throw new Error('remote import unavailable');
+      const data = await res.json();
+      setRemoteJob(data.job);
+      setRemoteJobs((current) => [data.job, ...current.filter((job) => job.jobId !== data.job.jobId)].slice(0, 4));
+      const artifactAssets = remoteArtifactsToAssets(data.artifacts);
+      if (artifactAssets.length) setAssets(artifactAssets);
+      addTimeline(`Imported ${data.job.artifactSummary?.evolutionBundleId || data.job.jobId} from remote compute.`);
+    } catch {
+      const imported = {
+        ...remoteJob,
+        status: 'imported',
+        artifactSummary: {
+          generatedFiles: ['policy_eval.json', 'validation_report.json', 'suggested_mutations.json', 'evolution_bundle.json'],
+          validationScore: 0.78,
+          suggestedMutationCount: 2,
+          evolutionBundleId: `bundle_${remoteJob.jobId}`
+        }
+      };
+      setRemoteJob(imported);
+      setAssets([
+        { type: 'ValidationReport', id: `val_${remoteJob.jobId}`, asset_id: 'remote:prototype' },
+        { type: 'Mutation', id: `mut_${remoteJob.jobId}_policy`, asset_id: 'remote:prototype' },
+        { type: 'EvolutionBundle', id: `bundle_${remoteJob.jobId}`, asset_id: 'remote:prototype' }
+      ]);
+      addTimeline(`Demo imported EvolutionBundle for ${remoteJob.jobId}.`);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function refreshRemoteJobs() {
+    setRemoteLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/remote-jobs`);
+      if (!res.ok) throw new Error('remote list unavailable');
+      const data = await res.json();
+      setRemoteJobs(data.jobs || []);
+      if (!remoteJob && data.jobs?.[0]) setRemoteJob(data.jobs[0]);
+      addTimeline(`Remote queue refreshed: ${data.jobs?.length || 0} job(s).`);
+    } catch {
+      addTimeline('Remote queue refresh fell back to local demo state.');
+    } finally {
+      setRemoteLoading(false);
     }
   }
 
@@ -237,8 +336,8 @@ export default function Page() {
       <TopRail source={result.source} />
 
       <section className="relative z-10 mx-auto max-w-[1480px] px-5 pb-8 pt-5 lg:px-8">
-        <div className="grid min-h-[calc(100vh-92px)] gap-5 xl:grid-cols-[380px_1fr_390px]">
-          <aside className="flex flex-col gap-5">
+        <div className="grid min-h-[calc(100vh-92px)] min-w-0 gap-4 sm:gap-5 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)_360px]">
+          <aside className="flex min-w-0 flex-col gap-5">
             <ControlPlaneCard yesness={result.yesness} delta={delta} />
             <AgentSessionCard
               eventText={eventText}
@@ -251,14 +350,22 @@ export default function Page() {
             />
           </aside>
 
-          <main className="flex flex-col gap-5">
+          <main className="flex min-w-0 flex-col gap-5">
             <HeroPanel result={result} activeGene={activeGene} reward={reward} delta={delta} />
             <RuntimePipeline result={result} activeGene={activeGene} assets={assets} />
           </main>
 
-          <aside className="flex flex-col gap-5">
+          <aside className="flex min-w-0 flex-col gap-5 xl:col-span-2 2xl:col-span-1">
             <BehaviorControlPanel activeGeneId={result.geneId} />
             <GepAssetStream assets={assets} reward={reward} />
+            <RemoteComputePanel
+              job={remoteJob}
+              jobs={remoteJobs}
+              loading={remoteLoading}
+              onSubmit={submitRemoteJob}
+              onImport={importRemoteArtifacts}
+              onRefresh={refreshRemoteJobs}
+            />
             <TimelinePanel timeline={timeline} />
           </aside>
         </div>
@@ -301,12 +408,12 @@ function TopRail({ source }: { source: SourceMode }) {
 
 function ControlPlaneCard({ yesness, delta }: { yesness: number; delta: number }) {
   return (
-    <section className="rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
       <div className="flex items-center justify-between">
         <span className="rounded-full border border-[#19e6ff]/25 bg-[#19e6ff]/10 px-3 py-1 text-xs text-[#19e6ff]">Agent evolution layer</span>
         <Network className="h-5 w-5 text-white/35" />
       </div>
-      <h1 className="mt-8 text-[40px] font-semibold leading-[0.98] tracking-[-0.075em] text-white">
+      <h1 className="mt-8 text-[34px] font-semibold leading-[0.98] tracking-[-0.075em] text-white sm:text-[40px]">
         Don&apos;t replace<br />your agent.<br /><span className="text-[#19e6ff]">Teach it.</span>
       </h1>
       <p className="mt-5 text-sm leading-6 text-white/45">
@@ -346,7 +453,7 @@ function AgentSessionCard({
   recordFeedback: (kind: 'accepted' | 'corrected' | 'interrupted') => void;
 }) {
   return (
-    <section className="rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
       <PanelHeader icon={<TerminalSquare />} title="Live Agent Session" subtitle="observer mode" />
       <div className="mt-5 grid gap-3">
         <SessionRow label="Source" value="Codex CLI" status="observed" />
@@ -376,7 +483,7 @@ function AgentSessionCard({
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
         <FeedbackButton icon={<ThumbsUp />} label="Accepted" tone="mint" onClick={() => recordFeedback('accepted')} />
         <FeedbackButton icon={<ThumbsDown />} label="Corrected" tone="gray" onClick={() => recordFeedback('corrected')} />
         <FeedbackButton icon={<ShieldCheck />} label="Interrupted" tone="red" onClick={() => recordFeedback('interrupted')} />
@@ -387,20 +494,20 @@ function AgentSessionCard({
 
 function HeroPanel({ result, activeGene, reward, delta }: { result: AnalyzeResult; activeGene: GeneTuple; reward: RewardResult | null; delta: number }) {
   return (
-    <section className="relative min-h-[450px] overflow-hidden rounded-[34px] border border-white/[0.08] bg-[#050505]/95 p-6 lg:p-7">
+    <section className="relative min-h-[450px] min-w-0 overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#050505]/95 p-5 sm:rounded-[34px] sm:p-6 lg:p-7">
       <div className="absolute inset-0 opacity-70">
         <div className="absolute -right-48 -top-48 h-[620px] w-[620px] rounded-full border border-white/[0.055]" />
         <div className="absolute -right-28 -top-28 h-[420px] w-[420px] rounded-full border border-white/[0.06]" />
         <div className="absolute bottom-0 left-0 h-px w-full bg-gradient-to-r from-transparent via-[#19e6ff]/45 to-transparent" />
       </div>
-      <div className="relative z-10 grid h-full gap-6 lg:grid-cols-[1.08fr_330px]">
-        <div className="flex flex-col justify-between">
+      <div className="relative z-10 grid h-full min-w-0 gap-6 2xl:grid-cols-[minmax(0,1.08fr)_330px]">
+        <div className="flex min-w-0 flex-col justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-white/[0.09] bg-white/[0.035] px-3 py-1.5 text-xs text-white/45">
               <span className="h-1.5 w-1.5 rounded-full bg-[#19e6ff] shadow-[0_0_14px_rgba(25,230,255,0.9)]" />
               Self-evolving behavior layer for existing agents
             </div>
-            <h2 className="mt-7 max-w-4xl text-[42px] font-semibold leading-[0.95] tracking-[-0.075em] lg:text-[58px]">
+            <h2 className="mt-7 max-w-4xl text-[34px] font-semibold leading-[0.95] tracking-[-0.075em] sm:text-[42px] lg:text-[54px] 2xl:text-[58px]">
               Codex keeps working.<br /><span className="text-[#19e6ff]">EvoMate makes it adapt.</span>
             </h2>
             <p className="mt-6 max-w-2xl text-base leading-7 text-white/48 lg:text-lg">
@@ -408,7 +515,7 @@ function HeroPanel({ result, activeGene, reward, delta }: { result: AnalyzeResul
             </p>
           </div>
 
-          <div className="mt-8 grid max-w-3xl gap-3 md:grid-cols-4">
+          <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-2 2xl:grid-cols-4">
             <MetricBox label="Semantic Parse" value={result.llmUsed ? 'EvoMap LLM' : 'Seed rules'} />
             <MetricBox label="Intent" value={result.semantic.intent} />
             <MetricBox label="Confidence" value={result.llmConfidence == null ? `${(result.semantic.confidence * 100).toFixed(0)}%` : `${(result.llmConfidence * 100).toFixed(0)}%`} />
@@ -422,7 +529,7 @@ function HeroPanel({ result, activeGene, reward, delta }: { result: AnalyzeResul
           </div>
         </div>
 
-        <div className="rounded-[26px] border border-white/[0.08] bg-[#111]/80 p-5 shadow-[0_0_80px_rgba(25,230,255,0.06)]">
+        <div className="min-w-0 rounded-[26px] border border-white/[0.08] bg-[#111]/80 p-5 shadow-[0_0_80px_rgba(25,230,255,0.06)]">
           <p className="text-xs uppercase tracking-[0.22em] text-white/35">Advisor output</p>
           <p className="mt-4 text-3xl font-semibold tracking-[-0.05em] text-[#83f3b1]">{activeGene[0]}</p>
           <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
@@ -455,9 +562,9 @@ function RuntimePipeline({ result, activeGene, assets }: { result: AnalyzeResult
   ];
 
   return (
-    <section className="rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
       <PanelHeader icon={<Network />} title="Runtime Integration" subtitle="not a chat UI" />
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {steps.map((step, index) => (
           <div key={step.label} className="relative rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
             {index < steps.length - 1 && <div className="absolute right-[-18px] top-1/2 z-10 hidden h-px w-8 bg-gradient-to-r from-[#19e6ff]/60 to-transparent md:block" />}
@@ -468,10 +575,10 @@ function RuntimePipeline({ result, activeGene, assets }: { result: AnalyzeResult
           </div>
         ))}
       </div>
-      <div className="mt-4 grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="rounded-2xl border border-[#19e6ff]/15 bg-[#19e6ff]/[0.035] p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+      <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <div className="min-w-0 rounded-2xl border border-[#19e6ff]/15 bg-[#19e6ff]/[0.035] p-4">
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.22em] text-[#19e6ff]/70">Semantic Contract</p>
               <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-white">{result.semantic.intent}</p>
             </div>
@@ -485,7 +592,7 @@ function RuntimePipeline({ result, activeGene, assets }: { result: AnalyzeResult
             <MetricBox label="Risk" value={result.semantic.riskLevel} />
           </div>
         </div>
-        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+        <div className="min-w-0 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
           <p className="text-xs uppercase tracking-[0.22em] text-white/30">Routed into 3 layers</p>
           <div className="mt-3 space-y-2">
             <SemanticRoute label="Behavior" value={result.semantic.workstyleSignals.join(', ') || 'neutral collaboration policy'} />
@@ -505,7 +612,7 @@ function RuntimePipeline({ result, activeGene, assets }: { result: AnalyzeResult
 
 function SemanticRoute({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[88px_1fr] gap-3 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2.5">
+    <div className="grid min-w-0 grid-cols-[82px_minmax(0,1fr)] gap-3 rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2.5 sm:grid-cols-[88px_minmax(0,1fr)]">
       <p className="text-[10px] uppercase tracking-[0.18em] text-white/32">{label}</p>
       <p className="truncate text-xs text-white/62">{value}</p>
     </div>
@@ -514,7 +621,7 @@ function SemanticRoute({ label, value }: { label: string; value: string }) {
 
 function BehaviorControlPanel({ activeGeneId }: { activeGeneId: string }) {
   return (
-    <section className="rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
       <PanelHeader icon={<GitBranch />} title="Behavior Control" subtitle="advisor policy" />
       <div className="mt-5 space-y-3">
         {genes.map(([label, id, score, body, mode]) => {
@@ -542,11 +649,11 @@ function BehaviorControlPanel({ activeGeneId }: { activeGeneId: string }) {
 
 function GepAssetStream({ assets, reward }: { assets: GepAsset[]; reward: RewardResult | null }) {
   return (
-    <section className="rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
       <PanelHeader icon={<Layers3 />} title="GEP Asset Stream" subtitle="evomap ledger" />
       <div className="mt-5 space-y-3">
         {assets.map((asset) => (
-          <div key={`${asset.type}_${asset.id}`} className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+          <div key={`${asset.type}_${asset.id}`} className="min-w-0 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
             <div className="flex items-center justify-between gap-3">
               <p className="font-medium text-white">{asset.type}</p>
               <BadgeCheck className={`h-4 w-4 ${asset.asset_id ? 'text-[#83f3b1]' : 'text-white/24'}`} />
@@ -564,13 +671,121 @@ function GepAssetStream({ assets, reward }: { assets: GepAsset[]; reward: Reward
   );
 }
 
+
+function RemoteComputePanel({
+  job,
+  jobs,
+  loading,
+  onSubmit,
+  onImport,
+  onRefresh
+}: {
+  job: RemoteJob | null;
+  jobs: RemoteJob[];
+  loading: boolean;
+  onSubmit: () => void;
+  onImport: () => void;
+  onRefresh: () => void;
+}) {
+  const active = job ?? jobs[0];
+  const statusTone = active?.status === 'imported' || active?.status === 'completed'
+    ? 'text-[#83f3b1]'
+    : active?.status === 'failed'
+      ? 'text-[#ff7d7d]'
+      : 'text-[#19e6ff]';
+
+  return (
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
+      <PanelHeader icon={<CircuitBoard />} title="Remote Compute" subtitle="gpu distribution" />
+      <div className="mt-5 rounded-2xl border border-[#19e6ff]/15 bg-[#19e6ff]/[0.035] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.22em] text-[#19e6ff]/70">Evolution Lab</p>
+            <p className="mt-2 text-sm leading-5 text-white/62">Local MCP stays fast. Heavy evolution jobs move to remote GPU worker.</p>
+          </div>
+          <Cpu className="h-6 w-6 text-[#19e6ff]" />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <MetricBox label="Host" value={active?.target?.host || 'configured host'} />
+          <MetricBox label="Mode" value={active?.target?.executeRemote ? 'ssh' : 'dry-run'} />
+          <MetricBox label="Status" value={active?.status || 'ready'} tone={active?.status === 'failed' ? 'red' : 'cyan'} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onSubmit}
+          className="flex items-center justify-center gap-2 rounded-2xl bg-white px-3 py-3 text-xs font-medium text-black transition hover:bg-white/90"
+        >
+          {loading ? <RefreshCcw className="h-4 w-4 animate-spin" /> : <RadioTower className="h-4 w-4" />}
+          Submit Job
+        </button>
+        <button
+          type="button"
+          onClick={onImport}
+          disabled={!active}
+          className="flex items-center justify-center gap-2 rounded-2xl border border-[#83f3b1]/25 bg-[#83f3b1]/10 px-3 py-3 text-xs font-medium text-[#83f3b1] transition disabled:cursor-not-allowed disabled:opacity-35"
+        >
+          <BadgeCheck className="h-4 w-4" />
+          Import
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={onRefresh}
+        className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-3 py-2.5 text-xs text-white/50 transition hover:text-white"
+      >
+        <RefreshCcw className="h-3.5 w-3.5" />
+        Refresh Queue
+      </button>
+
+      <div className="mt-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-[0.22em] text-white/30">Active job</p>
+            <p className="mt-2 truncate text-sm font-medium text-white">{active?.jobId || 'no job submitted yet'}</p>
+          </div>
+          <p className={`text-sm font-semibold ${statusTone}`}>{active?.status || 'idle'}</p>
+        </div>
+        <p className="mt-3 line-clamp-2 text-sm leading-5 text-white/42">{active?.objective || 'Submit an evolution_gym_eval job to produce policy_eval, ValidationReport, mutations, and EvolutionBundle.'}</p>
+        <div className="mt-4 space-y-2">
+          <RemoteStep label="Dataset" active={Boolean(active)} />
+          <RemoteStep label="SSH Queue" active={Boolean(active)} />
+          <RemoteStep label="Python Worker" active={active?.status === 'running' || active?.status === 'completed' || active?.status === 'imported'} />
+          <RemoteStep label="GEP Import" active={active?.status === 'imported'} />
+        </div>
+      </div>
+
+      {active?.artifactSummary && (
+        <div className="mt-4 rounded-2xl border border-[#83f3b1]/16 bg-[#83f3b1]/[0.045] p-4">
+          <p className="text-xs uppercase tracking-[0.22em] text-[#83f3b1]/70">Imported bundle</p>
+          <p className="mt-2 truncate text-sm text-white">{active.artifactSummary.evolutionBundleId}</p>
+          <p className="mt-2 text-xs text-white/44">
+            score {((active.artifactSummary.validationScore || 0) * 100).toFixed(0)}% · {active.artifactSummary.suggestedMutationCount || 0} mutation(s)
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RemoteStep({ label, active }: { label: string; active: boolean }) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2">
+      <span className="text-xs text-white/52">{label}</span>
+      <span className={`h-2 w-2 rounded-full ${active ? 'bg-[#83f3b1] shadow-[0_0_12px_rgba(131,243,177,0.65)]' : 'bg-white/18'}`} />
+    </div>
+  );
+}
+
 function TimelinePanel({ timeline }: { timeline: string[] }) {
   return (
-    <section className="rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
+    <section className="min-w-0 rounded-[28px] border border-white/[0.08] bg-[#070707]/90 p-5">
       <PanelHeader icon={<Activity />} title="Evolution Timeline" subtitle="observer log" />
       <div className="mt-5 space-y-3">
         {timeline.map((event, index) => (
-          <div key={`${event}_${index}`} className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+          <div key={`${event}_${index}`} className="min-w-0 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
             <p className="text-xs text-[#19e6ff]">evt_0{index + 1}</p>
             <p className="mt-2 text-sm leading-6 text-white/56">{event}</p>
           </div>
@@ -745,6 +960,34 @@ function asString(value: unknown, fallback: string) {
 
 function asStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+}
+
+
+function mockRemoteJob(): RemoteJob {
+  const jobId = `job_evolution_gym_eval_${Date.now().toString().slice(-8)}`;
+  return {
+    jobId,
+    type: 'evolution_gym_eval',
+    status: 'queued',
+    objective: 'Full remote evolution prototype: evaluate behavior policy, produce ValidationReport and EvolutionBundle.',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    target: { host: 'remote.example.com', port: 22, user: 'evomate', executeRemote: false },
+    remotePlan: { bootstrap: ['ssh mkdir'], sync: ['rsync repo'], submit: ['python remote_worker'], import: ['scp artifacts'] }
+  };
+}
+
+function remoteArtifactsToAssets(artifacts: Record<string, unknown>): GepAsset[] {
+  const validation = artifacts?.validationReport as { id?: string } | undefined;
+  const bundle = artifacts?.evolutionBundle as { id?: string } | undefined;
+  const mutations = Array.isArray(artifacts?.suggestedMutations) ? artifacts.suggestedMutations as Array<{ id?: string }> : [];
+  const assets: GepAsset[] = [];
+  if (validation?.id) assets.push({ type: 'ValidationReport', id: validation.id, asset_id: 'remote:imported' });
+  for (const mutation of mutations.slice(0, 2)) {
+    if (mutation.id) assets.push({ type: 'Mutation', id: mutation.id, asset_id: 'remote:imported' });
+  }
+  if (bundle?.id) assets.push({ type: 'EvolutionBundle', id: bundle.id, asset_id: 'remote:imported' });
+  return assets;
 }
 
 function formatReward(value: number) {

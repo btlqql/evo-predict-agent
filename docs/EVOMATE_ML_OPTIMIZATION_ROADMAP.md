@@ -5,10 +5,10 @@
 The project can use the user's remote machine for heavier ML experiments and hosted demos.
 
 ```text
-Host: 100.70.188.115
-Port: 9022
+Host: <remote-host>
+Port: <port>
 User: wzu
-SSH: /Users/wangyue/.ssh/id_ed25519
+SSH: /path/to/ssh_key
 ```
 
 Verified environment on 2026-06-19:

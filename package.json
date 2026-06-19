@@ -12,6 +12,9 @@
     "evomate:api": "npm run dev -w apps/api",
     "evomate:web": "npm run dev -w apps/web",
     "evomate:mcp": "npm run dev -w packages/evomate-mcp",
+    "evomate:observe": "npm --silent run observe -w packages/evomate-sidecar --",
+    "evomate:advisor": "npm --silent run advisor -w packages/evomate-sidecar --",
+    "evomate:outcome": "npm --silent run outcome -w packages/evomate-sidecar --",
     "evomate:check": "npm run check --workspaces --if-present",
     "test:python": "python3 -m unittest discover -s tests -v",
     "check": "npm run gep:schema-validate && npm run evomate:check && npm run test:python"

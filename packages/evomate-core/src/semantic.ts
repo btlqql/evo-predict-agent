@@ -40,13 +40,14 @@ export function parseSemantics(rawInput: string): SemanticParseResult {
   const toolNeeds = new Set<string>();
   const signals = new Set<string>();
 
-  const hasCoding = /代码|repo|仓库|github|codex|cli|前端|后端|环境|部署|文件|改/.test(rawInput);
+  const hasCoding = /代码|repo|仓库|github|codex|claude code|cursor|cli|hook|sidecar|api|接口|端点|前端|后端|环境|部署|文件|改/i.test(rawInput);
   const hasProduct = /痛点|市场|产品|路演|场景|商业|方向|评委|黑客松|pitch|demo/i.test(rawInput);
   const hasResearch = /查|搜索|研究|官网|调查|资料|最新|compare|research/i.test(rawInput);
   const hasFrontend = /前端|界面|ui|视觉|布局|好看|科技感|dashboard|browser/i.test(lower);
-  const hasArchitecture = /架构|系统|流程|图|画|mcp|工具流|workflow|语义|semantic/i.test(lower);
+  const hasArchitecture = /架构|系统|流程|图|画|mcp|hook|sidecar|接入|集成|integration|工具流|workflow|语义|semantic/i.test(lower);
   const hasML = /机器学习|ml|算法|bandit|reward|奖励|训练|模型|preference|embedding/i.test(lower);
   const hasEvoMap = /evomap|gep|gene|capsule|进化|mutation|validation/i.test(lower);
+  const hasInfrastructure = /hook|sidecar|api|接口|端点|集成|接入|编排|orchestrator|runtime|server/i.test(lower);
   const hasDirect = /继续|直接|开始|搞|做一下|拉起|跑|推|部署|改/.test(rawInput);
   const hasCaution = /先|看看|分析|讲|解释|别|不要|没叫你|你干啥|乱动|不能|不许/.test(rawInput);
   const hasNegative = /不是|不对|丑|错|你干啥|别乱动|太像|难看|不行/.test(rawInput);
@@ -76,6 +77,11 @@ export function parseSemantics(rawInput: string): SemanticParseResult {
   if (hasArchitecture) {
     signals.add('architecture_request');
     toolNeeds.add('architecture_mapping');
+  }
+  if (hasInfrastructure) {
+    signals.add('infrastructure');
+    domainSignals.add('agent_runtime');
+    toolNeeds.add('host_integration');
   }
   if (hasML) {
     signals.add('ml_policy');

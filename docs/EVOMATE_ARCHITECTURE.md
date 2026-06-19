@@ -28,6 +28,10 @@ User Input / Feedback
 
 This avoids sending raw user text independently into ML, prompt mutation, and workflow routing. The Semantic Parser produces one shared meaning contract, then the three evolution layers act on it. Full spec: `docs/EVOMATE_SEMANTIC_ARCHITECTURE.md`.
 
+## Architecture Diagrams
+
+Roadshow-ready Mermaid diagrams are recorded in `docs/EVOMATE_ARCHITECTURE_DIAGRAMS.md`.
+
 ## Runtime Loop
 
 ```text

@@ -1,0 +1,18 @@
+{
+  "name": "evomate-cursor-mcp-template",
+  "description": "Template: Cursor can use EvoMate through MCP tools plus the sidecar observer when shell hooks are available.",
+  "mcp": {
+    "server": "evomate-mcp-server",
+    "tools": [
+      "evomate_parse_semantics",
+      "evomate_select_behavior_gene",
+      "evomate_record_feedback",
+      "evomate_get_evolution_state"
+    ]
+  },
+  "sidecar": {
+    "observe": "npm --silent run evomate:observe -- --source cursor --event user_message || true",
+    "advisor": "npm --silent run evomate:advisor -- --source cursor --event advisor_prepare --text || true",
+    "outcome": "npm --silent run evomate:outcome -- --source cursor --event task_completed --outcome success || true"
+  }
+}

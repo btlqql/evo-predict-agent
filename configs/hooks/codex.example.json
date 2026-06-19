@@ -1,0 +1,25 @@
+{
+  "name": "evomate-codex-sidecar-template",
+  "description": "Template: wire these non-blocking commands into Codex hook/session events. Keep `|| true` so EvoMate never blocks Codex.",
+  "env": {
+    "EVOMATE_API_URL": "http://localhost:8787",
+    "EVOMATE_HOOK_TIMEOUT_MS": "900"
+  },
+  "events": [
+    {
+      "hook": "user_message_or_prompt_received",
+      "command": "npm --silent run evomate:observe -- --source codex --event user_message || true",
+      "stdin": "pass the host hook JSON payload"
+    },
+    {
+      "hook": "before_response_optional_advisor",
+      "command": "npm --silent run evomate:advisor -- --source codex --event advisor_prepare --text || true",
+      "stdin": "pass the current user prompt; inject output only when your Codex surface supports advisor/system context"
+    },
+    {
+      "hook": "session_or_task_completed",
+      "command": "npm --silent run evomate:outcome -- --source codex --event task_completed --outcome success || true",
+      "stdin": "pass outcome summary JSON if available"
+    }
+  ]
+}
