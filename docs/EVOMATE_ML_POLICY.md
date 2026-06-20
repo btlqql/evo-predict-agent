@@ -228,7 +228,7 @@ Environment:
 
 ```text
 EVOMAP_LLM_BASE_URL=https://api.evomap.ai/v1
-EVOMAP_LLM_API_KEY=sk-evomap-...
+EVOMAP_LLM_API_KEY=<your-evomap-key>
 EVOMAP_LLM_MODEL=evomap-claude-opus-4-7
 EVOMAP_LLM_TIMEOUT_MS=12000
 ```

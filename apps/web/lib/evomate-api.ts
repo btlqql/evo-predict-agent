@@ -4,6 +4,7 @@ import type {
   EvolutionState,
   FeedbackKind,
   FeedbackResponse,
+  MemoryRouteResponse,
   TrainResponse
 } from './types';
 
@@ -49,6 +50,10 @@ export function fetchEvolutionState() {
 
 export function fetchEvolutionHistory(limit = 24, jobs = true) {
   return requestJson<EvolutionHistory>(`/api/evolution/history?limit=${limit}&jobs=${jobs ? 'true' : 'false'}`, { timeoutMs: 4000 });
+}
+
+export function fetchMemoryRoute() {
+  return requestJson<MemoryRouteResponse>('/api/memory/route', { timeoutMs: 4000 });
 }
 
 export function analyzeInteraction(input: string, source = 'web_dashboard') {

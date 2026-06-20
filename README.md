@@ -1,145 +1,143 @@
-# Evo Predict Agent
+# EvoMate — EvoMap 自进化超级助理
 
-一个基于 **EvoMap GEP 技术栈** 的 **能力自进化 Agent** 原型。
+EvoMate 是一个基于 **EvoMap / GEP / MCP** 的自进化 Agent sidecar。它不做另一个聊天框，而是观察 Codex、Claude Code、浏览器 AI、移动端分享等交互，把用户反馈转成可复用的行为进化资产。
 
-重点不是“预测用户下一类问题”，而是验证：
+核心主张：**进化不只是 prompt injection，而是 Memory Engineering + 工程层 MoE Router + GEP 资产固化。**
 
-```text
-同一组任务
-baseline agent（无 Gene/Capsule）
-vs
- evolved agent（复用 EvoMap Gene/Capsule）
-```
+## 30 秒验收
 
-如果 evolved agent 在同题 benchmark 上通过 capability validation，并且相关 Gene/Capsule 复用带来分数提升，才把这次提升固化为新的 Capsule / EvolutionEvent / CapabilityEvaluationReport。
-
-## 核心闭环
-
-```text
-Capability Benchmark
-  -> baseline answer
-  -> evolved answer with GEP Gene/Capsule
-  -> score before/after with validation gates
-  -> CapabilityEvaluationReport
-  -> solidify successful deltas into Capsules + EvolutionEvents
-  -> next run reuses stronger memory
-```
-
-## 为什么这是 EvoMap 逻辑
-
-EvoMap 的核心不是模型权重训练，而是 **agent runtime capability evolution**：
-
-- `Gene`：可复用策略
-- `Capsule`：具体成功/失败经验
-- `asset_id`：官方 GEP 内容哈希
-- `EvolutionEvent / CapabilityEvaluationReport`：证明复用后能力提升
-- `MCP`：让其他 agent 读取/复用这些资产
-
-本项目用本地 benchmark 证明：同样的问题集，使用 GEP 资产后的 agent 比 baseline 更会解决问题。
-
-## 快速 demo
+先启动 API：
 
 ```bash
-cd /Users/wangyue/evo/evo-predict-agent
-npm install
-python3 -m evo_predict_agent.cli init
-python3 -m evo_predict_agent.cli capability-eval --out memory/capability_report.json
-python3 -m evo_predict_agent.cli capability-solidify --report memory/capability_report.json
-python3 -m evo_predict_agent.cli verify-assets
-python3 -m evo_predict_agent.cli gep-schema-validate
-python3 -m evo_predict_agent.cli export-gep --out memory/gep_bundle.local.json
+set -a; [ -f ./.env.local ] && . ./.env.local; set +a
+EVOMATE_API_PORT=8787 npm run evomate:api
 ```
 
-你会看到类似：
-
-```json
-{
-  "baseline_avg": 0.2,
-  "evolved_avg": 0.75,
-  "absolute_improvement": 0.55,
-  "relative_improvement_pct": 275
-}
-```
-
-## 当前 CLI
+另开终端启动前端：
 
 ```bash
-python3 -m evo_predict_agent.cli capability-eval
-python3 -m evo_predict_agent.cli capability-solidify
-python3 -m evo_predict_agent.cli verify-assets
-python3 -m evo_predict_agent.cli export-gep
-python3 -m evo_predict_agent.cli gep-info
-python3 -m evo_predict_agent.cli gep-schema-validate
-npm run mcp:local
+EVOMATE_WEB_PORT=3333 NEXT_PUBLIC_EVOMATE_API_URL=http://127.0.0.1:8787 npm run evomate:web
 ```
 
-旧的 `predict/pre-evolve` 命令仍保留为辅助实验，但不再是主叙事。
-
-## 关键文件
+打开：
 
 ```text
-evo_predict_agent/capability.py   # baseline vs evolved 能力评测闭环
-evo_predict_agent/assets.py       # Gene/Capsule store
-evo_predict_agent/evomap_gep.py   # Python -> @evomap/gep-sdk bridge
-evo_predict_agent/cli.py          # CLI
-scripts/gep_bridge.mjs            # 官方 GEP SDK 调用
-.mcp/gep-local.json               # 本地 MCP server 配置
+http://127.0.0.1:3333/mobile
+http://127.0.0.1:3333/graph
 ```
 
-## 与 atomation 的关系
+跑核心闭环 smoke：
 
-`atomation` 是比赛用自动机器学习实验 Agent，本仓库不修改它。
+```bash
+npm run evomate:smoke
+```
 
-我们借鉴它的“实验闭环”思想，但改造成 EvoMap 能力进化闭环：
+看到 `EVOMATE_SMOKE_OK` 代表：
 
 ```text
-experiment config -> score feedback
+hook event
+  -> advisor prepare
+  -> Memory MoE route
+  -> advisorPrompt 注入 MEM/GEP
+  -> feedback 写 GEP Mutation/EvolutionEvent
+  -> memory route 读回 GEP proof
 ```
 
-变成：
+## 路演评分点对应
+
+### 1. EvoMap 融合度
+
+- 使用 `@evomap/gep-sdk` 生成/校验 GEP asset id。
+- feedback/outcome 写入 `Mutation`、`EvolutionEvent`，达到阈值后可 solidify `Capsule`。
+- `npm run mcp:local` 可启动本地 GEP MCP server。
+- `/api/memory/route` 会读取 GEP genes/capsules/events 作为 `gepProof`。
+
+### 2. 技术创新性
+
+EvoMate 的执行链路：
 
 ```text
-agent strategy -> capability score -> capsule solidification
+Omni Hook Protocol
+  -> Semantic Signal
+  -> Memory Engineering MoE Router
+  -> Behavior Gene / Policy Bandit
+  -> Advisor Prompt Injection
+  -> Outcome / Feedback
+  -> GEP Asset Solidification
 ```
 
-## EvoMap 技术栈接入
+Memory Experts：
 
-这个仓库现在不是只“借概念”，而是接了 EvoMap 官方本地技术栈：
+- `episodic`：最近会话、hook、工具上下文
+- `procedural`：GEP capsule / workflow recipe
+- `validation`：测试、命令结果、失败样本
+- `repo`：Git、Terminal、本地项目文件
+- `preference`：用户纠正、禁忌、yes/no 偏好
+- `policy`：行为基因、reward、yesness 策略
 
-- `@evomap/gep-sdk`：官方 GEP schema version、content hash、asset id。
-- `@evomap/gep-mcp-server`：本地 MCP GEP server，可用本项目的 `assets/` 和 `memory/evolution/`。
-- `scripts/gep_bridge.mjs`：Python agent 与官方 Node GEP SDK 的桥。
+### 3. 商业/应用潜力
 
-安装 Node 依赖：
+EvoMate 适合作为 Codex / Claude Code / 浏览器 AI 的个人进化层：
+
+- 不替换原 AI 工具，只做 sidecar hook。
+- 低摩擦收集真实反馈。
+- 把“这次太啰嗦 / 太冒进 / 没跑检查”等反馈变成下次可复用的工程记忆。
+- 可扩展到团队共享 GEP 资产。
+
+### 4. 完成度与表现力
+
+- `/mobile`：手机演示入口，展示 Hook、Memory MoE、Yesness、Training、Feedback Dock。
+- `/graph`：进化树视图，展示事件如何进入进化节点。
+- `npm run evomate:smoke`：一键证明核心闭环活着。
+- Browser Extension / Sidecar / Local Agent：多入口 hook。
+
+## 常用命令
 
 ```bash
 npm install
-npm run gep:info
+npm run evomate:api
+npm run evomate:web
+npm run evomate:smoke
+npm run evomate:status -- --json
+npm run evomate:check
+NEXT_PUBLIC_EVOMATE_API_URL=http://127.0.0.1:8787 npm run build -w apps/web
 ```
 
-Python 侧验证：
+可选 smoke 场景：
 
 ```bash
-python3 -m evo_predict_agent.cli gep-info
-python3 -m evo_predict_agent.cli verify-assets
-python3 -m evo_predict_agent.cli gep-schema-validate
-python3 -m evo_predict_agent.cli export-gep --out memory/gep_bundle.local.json
+npm run evomate:smoke -- --scenario preference
+npm run evomate:smoke -- --scenario validation --no-write
+npm run evomate:smoke -- --scenario procedural --no-write
+npm run evomate:smoke -- --scenario repo --no-write
 ```
 
-启动本地 GEP MCP Server：
+默认 smoke 使用 fast advisor，避免现场被外部 LLM 网络延迟卡住。要验证真实 EvoMap LLM：
 
 ```bash
-npm run mcp:local
+npm run evomate:smoke -- --llm
 ```
 
-MCP 配置示例：
+## 关键目录
 
 ```text
-.mcp/gep-local.json
+apps/api/                         # EvoMate API: hooks, advisor, feedback, Memory MoE, GEP writes
+apps/web/                         # Next.js mobile dashboard + graph
+apps/browser-extension/           # ChatGPT / Claude / Gemini / Doubao web hook
+apps/local-agent/                 # 本地 Git/Terminal/桌面活动 hook
+packages/evomate-sidecar/         # Codex / Claude Code hook CLI
+packages/evomate-hooks/           # 统一 hook protocol
+packages/evomate-core/            # behavior genes, policy/reward, semantic parser
+assets/                           # GEP genes/capsules/events store (events ignored by git)
+docs/EVOMATE_MEMORY_MOE.md        # Memory MoE 设计和验收说明
 ```
 
-默认仍然 **不联网、不 publish、不上传 Hub**。如果后续要接 EvoMap Hub，再显式配置 `EVOMAP_NODE_ID / EVOMAP_NODE_SECRET / EVOMAP_API_KEY`。
+## 与旧实验代码的关系
 
-## 当前边界
+仓库早期包含 `evo_predict_agent/` 的 capability benchmark 实验，用来验证 baseline vs evolved 的能力提升。当前路演主线已经切到 EvoMate：面向真实 Codex/Claude/browser/mobile 工作流的 runtime evolution sidecar。旧实验仍保留为辅助资产，不再是主叙事。
 
-这不是模型权重 fine-tuning，而是 EvoMap 风格的 test-time/runtime 能力提升：通过 Gene 选择、Capsule 召回、Validation gate、EvolutionEvent 审计，让 agent 下一次做同类能力任务时更稳。旧的 `predict/pre-evolve` 只是保留实验入口，不是主线。
+## 安全边界
+
+- `.env.local` 被 gitignore，真实 EvoMap key 不提交。
+- `memory/`、`assets/events.jsonl` 默认忽略，避免提交本地会话和反馈流水。
+- Hook sidecar 会 redaction 常见 token / secret 字段。

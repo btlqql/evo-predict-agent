@@ -1,0 +1,16 @@
+{
+  "name": "@evomate/local-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "evomate-local-agent": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@evomate/hooks": "0.1.0"
+  }
+}

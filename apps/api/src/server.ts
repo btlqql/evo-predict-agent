@@ -4,7 +4,7 @@ import { cors } from 'hono/cors';
 import { z } from 'zod';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { extractSignalsWithEvoMapLlm, getEvoMapLlmConfig } from './evomap-llm.js';
+import { extractSignalsWithEvoMapLlm, getEvoMapLlmConfig, maintainNextStepWithEvoMapLlm, type MaintainedNextStepState } from './evomap-llm.js';
 import { loadLocalEnv } from './env.js';
 import { recordFeedbackGepAssets } from './gep-assets.js';
 import { resolveFromProjectRoot } from './paths.js';
@@ -102,6 +102,12 @@ const historyQuerySchema = z.object({
   jobs: z.coerce.boolean().default(false)
 });
 
+const memoryRouteSchema = z.object({
+  input: z.string().optional(),
+  source: z.string().default('memory_router'),
+  signals: z.array(z.string()).optional()
+});
+
 app.get('/health', (c) => c.json({
   ok: true,
   service: 'evomate-api',
@@ -112,8 +118,32 @@ app.get('/health', (c) => c.json({
 app.get('/api/tech-stack', (c) => c.json(EVOMATE_TECH_STACK));
 
 app.get('/api/evolution/state', async (c) => {
-  const state = await loadState();
+  const state = await loadStateWithMaintainedNextStep();
   return c.json(state);
+});
+
+app.get('/api/evolution/next-step', async (c) => {
+  const state = await loadStateWithMaintainedNextStep();
+  const runtimeState = state as RuntimeEvolutionState;
+  return c.json({
+    ok: true,
+    nextStep: runtimeState.nextStep,
+    latestEventId: state.timeline[0]?.id,
+    maintainedBy: runtimeState.nextStep?.source || 'missing'
+  });
+});
+
+app.get('/api/memory/route', async (c) => {
+  const state = await loadState();
+  return c.json(await buildMemoryRoute(state as RuntimeEvolutionState));
+});
+
+app.post('/api/memory/route', async (c) => {
+  const parsed = memoryRouteSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: 'invalid_memory_route_request', details: parsed.error.flatten() }, 400);
+
+  const state = await loadState();
+  return c.json(await buildMemoryRoute(state as RuntimeEvolutionState, parsed.data));
 });
 
 app.get('/api/evolution/history', async (c) => {
@@ -288,6 +318,7 @@ app.post('/api/interactions/analyze', async (c) => {
     trainedModelInsight,
     predictedSatisfaction,
     advisorPrompt: advisor.advisorPrompt,
+    memoryRoute: compactMemoryRoute(advisor.memoryRoute),
     state: nextState
   });
 });
@@ -338,7 +369,8 @@ app.post('/api/advisor/prepare', async (c) => {
     gene: advisor.gene,
     policyDecision: advisor.policyDecision,
     trainedModelInsight: advisor.trainedModelInsight,
-    predictedSatisfaction: advisor.predictedSatisfaction
+    predictedSatisfaction: advisor.predictedSatisfaction,
+    memoryRoute: compactMemoryRoute(advisor.memoryRoute)
   });
 });
 
@@ -470,6 +502,7 @@ async function processAdvisorEvent(rawEvent: AgentEventInput, mode: string): Pro
       policyDecision: advisor.policyDecision,
       trainedModelInsight: advisor.trainedModelInsight,
       predictedSatisfaction: advisor.predictedSatisfaction,
+      memoryRoute: compactMemoryRoute(advisor.memoryRoute),
       state: nextState
     }
   };
@@ -532,7 +565,7 @@ async function processObserveOnlyHookEvent(hookEvent: NormalizedEvoMateHookEvent
     type: 'omni_hook_received',
     summary: `${hookEvent.channel}:${hookEvent.eventKind} observed from ${hookEvent.source}`,
     score: hookEvent.content?.trim() ? 0.52 : 0.42,
-    signals: ['omni_hook', channelSignal, kindSignal]
+    signals: [...new Set(['omni_hook', channelSignal, kindSignal, ...hookEvent.signals])]
   })], 'user_input_received');
   await saveState(nextState);
 
@@ -616,19 +649,101 @@ async function loadState(): Promise<EvolutionState> {
   }
 }
 
-async function saveState(state: EvolutionState): Promise<void> {
+async function saveState(state: EvolutionState, options: { maintainNextStep?: boolean } = {}): Promise<void> {
+  if (options.maintainNextStep) {
+    const nextState = await attachMaintainedNextStep(state);
+    await persistState(nextState);
+    return;
+  }
+  await persistState(state);
+}
+
+async function persistState(state: EvolutionState): Promise<void> {
   await mkdir(dirname(STATE_FILE), { recursive: true });
   await writeFile(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
+async function loadStateWithMaintainedNextStep(): Promise<RuntimeEvolutionState> {
+  const state = await loadState();
+  const runtimeState = state as RuntimeEvolutionState;
+  const previousNextStep = runtimeState.nextStep;
+  const nextState = await attachMaintainedNextStep(state);
+  if (nextState.nextStep !== previousNextStep) await persistState(nextState);
+  return nextState;
+}
+
+async function attachMaintainedNextStep(state: EvolutionState): Promise<RuntimeEvolutionState> {
+  const runtimeState = state as RuntimeEvolutionState;
+  const latestEventId = state.timeline[0]?.id;
+  const hasLlmConfig = Boolean(getEvoMapLlmConfig())
+    && process.env.EVOMATE_NEXT_STATE_DISABLED !== '1'
+    && process.env.EVOMATE_NEXT_STATE_DISABLED !== 'true'
+    && process.env.EVOMAP_LLM_DISABLED !== '1'
+    && process.env.EVOMAP_LLM_DISABLED !== 'true';
+  const current = runtimeState.nextStep;
+  const currentMatchesLatest = latestEventId && current?.inputEventId === latestEventId;
+  const cachedStateStillValid = currentMatchesLatest && (
+    current?.used
+    || (!hasLlmConfig && current?.enabled === false)
+  );
+  if (cachedStateStillValid) return runtimeState;
+  runtimeState.nextStep = await maintainNextStepWithEvoMapLlm(state);
+  return runtimeState;
+}
+
 type AgentEventInput = z.infer<typeof agentEventSchema>;
 type OutcomeInput = z.infer<typeof outcomeSchema>;
+type RuntimeEvolutionState = EvolutionState & { nextStep?: MaintainedNextStepState };
+type MemoryRouteInput = z.infer<typeof memoryRouteSchema>;
+type MemoryExpertId = 'episodic' | 'procedural' | 'validation' | 'repo' | 'preference' | 'policy';
+type MemoryExpertStatus = 'active' | 'ready' | 'cold';
+
+interface MemoryRecall {
+  id: string;
+  type: MemoryExpertId | 'failure';
+  title: string;
+  body: string;
+  source: string;
+  confidence: number;
+}
+
+interface MemoryExpertRoute {
+  id: MemoryExpertId;
+  label: string;
+  role: string;
+  score: number;
+  status: MemoryExpertStatus;
+  evidence: string;
+  signals: string[];
+  memories: MemoryRecall[];
+}
+
+interface MemoryRouteResponse {
+  ok: true;
+  schemaVersion: 'evomate.memory_router.v1';
+  mode: 'engineering_moe';
+  activeExpert: MemoryExpertId;
+  confidence: number;
+  experts: MemoryExpertRoute[];
+  recalledMemories: MemoryRecall[];
+  routePlan: string[];
+  gepProof: {
+    genes: number;
+    capsules: number;
+    events: number;
+    latestAsset?: string;
+    validationReady: boolean;
+  };
+  latestEventId?: string;
+  generatedAt: string;
+}
 
 interface AdvisorContext {
   source?: string;
   event?: string;
   workspace?: string;
   sessionId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 type TimelineEventInput = {
@@ -737,6 +852,297 @@ function compactStateSummary(state: EvolutionState): Record<string, unknown> {
   };
 }
 
+async function buildMemoryRoute(state: RuntimeEvolutionState, routeInput?: MemoryRouteInput): Promise<MemoryRouteResponse> {
+  const timeline = state.timeline.filter((item) => !/roadshow/i.test(item.summary)).slice(0, 100);
+  const latest = timeline[0];
+  const inferred = routeInput?.input?.trim() ? extractSignals(routeInput.input) : undefined;
+  const inputSignals = uniqueSignals([
+    ...(routeInput?.signals ?? []),
+    ...(inferred?.signals ?? [])
+  ]);
+  const routeSignals = uniqueSignals([
+    ...(latest?.signals ?? []),
+    ...inputSignals
+  ]);
+
+  const episodicEvents = timeline.filter((item) => /hook|advisor|semantic|omni/i.test(item.type));
+  const proceduralEvents = timeline.filter((item) => /gep|capsule|mutation|remote_job_imported|recipe|workflow/i.test(memorySearchText(item)));
+  const validationEvents = timeline.filter((item) => /validation|command|tool_result|policy_reward|feedback|outcome|failed|success|check|build/i.test(memorySearchText(item)));
+  const repoEvents = timeline.filter((item) => /git|terminal|local-agent|workspace|file|command|repo/i.test(memorySearchText(item)));
+  const preferenceEvents = timeline.filter((item) => /corrected|accepted|interrupted|rejected|undo|prefer|too_|feedback|不懂|啰嗦|太慢|冒进/i.test(memorySearchText(item)));
+  const policyEvents = timeline.filter((item) => /tournament|gene|policy|reward|yesness|bandit/i.test(memorySearchText(item)));
+  const topGene = [...state.activeGenes].sort((a, b) => (b.fitness + b.weight) - (a.fitness + a.weight))[0];
+  const activeExpert = pickMemoryExpert(latest, inputSignals, routeInput?.input);
+  const gepCounts = await readGepAssetCounts();
+
+  const memories: MemoryRecall[] = [
+    latest ? timelineMemory(latest, 'episodic', 'Latest live turn', 0.72) : undefined,
+    firstMemory(proceduralEvents, 'procedural', 'Reusable procedure / GEP trace', 0.76),
+    firstMemory(validationEvents, 'validation', 'Validation evidence', 0.74),
+    firstMemory(repoEvents, 'repo', 'Repository / local workflow', 0.7),
+    firstMemory(preferenceEvents, 'preference', 'User preference signal', 0.78),
+    topGene ? {
+      id: `mem_gene_${topGene.id}`,
+      type: 'policy',
+      title: 'Current behavior gene',
+      body: `${topGene.label}: ${topGene.summary}`,
+      source: topGene.id,
+      confidence: clampScore((topGene.fitness + topGene.weight) / 2)
+    } : undefined
+  ].filter((item): item is MemoryRecall => Boolean(item));
+
+  const experts: MemoryExpertRoute[] = [
+    makeMemoryExpert({
+      id: 'episodic',
+      activeExpert,
+      label: 'Episodic',
+      role: '最近会话、hook、工具调用和用户上下文',
+      baseScore: 0.48,
+      events: episodicEvents,
+      signals: routeSignals,
+      memories
+    }),
+    makeMemoryExpert({
+      id: 'procedural',
+      activeExpert,
+      label: 'Procedural',
+      role: '把做事方法沉淀成 GEP Capsule / workflow recipe',
+      baseScore: 0.52,
+      events: proceduralEvents,
+      signals: routeSignals,
+      memories
+    }),
+    makeMemoryExpert({
+      id: 'validation',
+      activeExpert,
+      label: 'Validation',
+      role: '测试、命令结果、失败样本和可复用约束',
+      baseScore: 0.46,
+      events: validationEvents,
+      signals: routeSignals,
+      memories
+    }),
+    makeMemoryExpert({
+      id: 'repo',
+      activeExpert,
+      label: 'Repo',
+      role: '项目结构、文件变更、Git/Terminal 活动',
+      baseScore: 0.42,
+      events: repoEvents,
+      signals: routeSignals,
+      memories
+    }),
+    makeMemoryExpert({
+      id: 'preference',
+      activeExpert,
+      label: 'Preference',
+      role: '用户口味、禁忌、纠正、yes/no 反馈',
+      baseScore: 0.5,
+      events: preferenceEvents,
+      signals: routeSignals,
+      memories
+    }),
+    makeMemoryExpert({
+      id: 'policy',
+      activeExpert,
+      label: 'Policy',
+      role: '行为基因、bandit、reward 和 yesness 策略',
+      baseScore: 0.5,
+      events: policyEvents,
+      signals: routeSignals,
+      memories
+    })
+  ].sort((a, b) => {
+    if (a.id === activeExpert) return -1;
+    if (b.id === activeExpert) return 1;
+    return b.score - a.score;
+  });
+
+  const active = experts.find((expert) => expert.id === activeExpert) ?? experts[0];
+  const recalledMemories = [...memories]
+    .sort((a, b) => {
+      if (a.type === activeExpert) return -1;
+      if (b.type === activeExpert) return 1;
+      return b.confidence - a.confidence;
+    })
+    .slice(0, 5);
+
+  return {
+    ok: true,
+    schemaVersion: 'evomate.memory_router.v1',
+    mode: 'engineering_moe',
+    activeExpert,
+    confidence: active.score,
+    experts,
+    recalledMemories,
+    routePlan: [
+      `retrieve:${activeExpert} · ${active.evidence}`,
+      `route:${routeSignals.slice(0, 4).join(', ') || 'latest_timeline'}`,
+      `execute:${topGene?.id ?? state.activeGenes[0]?.id ?? 'default_gene'} · ${state.nextStep?.stage ?? state.phase}`,
+      'solidify: feedback/outcome -> GEP Mutation + EvolutionEvent + Capsule when stable'
+    ],
+    gepProof: {
+      genes: Math.max(state.activeGenes.length, gepCounts.genes),
+      capsules: gepCounts.capsules || proceduralEvents.length,
+      events: gepCounts.events || timeline.filter((item) => /gep|mutation|capsule/i.test(memorySearchText(item))).length,
+      latestAsset: gepCounts.latestAsset ?? firstMemory(proceduralEvents, 'procedural', 'Latest GEP trace', 0.7)?.body,
+      validationReady: validationEvents.length > 0 || gepCounts.events > 0
+    },
+    latestEventId: latest?.id,
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function makeMemoryExpert(input: {
+  id: MemoryExpertId;
+  activeExpert: MemoryExpertId;
+  label: string;
+  role: string;
+  baseScore: number;
+  events: EvolutionState['timeline'];
+  signals: string[];
+  memories: MemoryRecall[];
+}): MemoryExpertRoute {
+  const eventScore = Math.min(0.24, input.events.length * 0.035);
+  const signalScore = Math.min(0.12, input.signals.filter((signal) => signalMatchesExpert(signal, input.id)).length * 0.04);
+  const activeBoost = input.id === input.activeExpert ? 0.2 : 0;
+  const score = clampScore(input.baseScore + eventScore + signalScore + activeBoost);
+  const memoryMatches = input.memories.filter((memory) => memory.type === input.id).slice(0, 2);
+  return {
+    id: input.id,
+    label: input.label,
+    role: input.role,
+    score,
+    status: input.id === input.activeExpert ? 'active' : input.events.length || memoryMatches.length ? 'ready' : 'cold',
+    evidence: cleanMemoryText(input.events[0]?.summary || memoryMatches[0]?.body || 'waiting for matching signal'),
+    signals: input.signals.filter((signal) => signalMatchesExpert(signal, input.id)).slice(0, 5),
+    memories: memoryMatches
+  };
+}
+
+function pickMemoryExpert(event?: EvolutionState['timeline'][number], signals: string[] = [], input = ''): MemoryExpertId {
+  const inputExpert = input.trim() ? pickMemoryExpertFromText(input.toLowerCase()) : undefined;
+  if (inputExpert) return inputExpert;
+  const signalExpert = signals.length ? pickMemoryExpertFromText(signals.join(' ').toLowerCase()) : undefined;
+  if (signalExpert) return signalExpert;
+  return pickMemoryExpertFromText(memorySearchText(event).toLowerCase()) ?? 'episodic';
+}
+
+function pickMemoryExpertFromText(text: string): MemoryExpertId | undefined {
+  if (/不懂|啰嗦|太慢|冒进|少废话|直接|简洁|prefer|too_verbose|too_slow|too_shallow|too_risky|concise|fast/.test(text)) return 'preference';
+  if (/validation|command|tool_result|failed|success|check|build|test|error|验证|测试|检查|失败|报错|构建/.test(text)) return 'validation';
+  if (/gep|capsule|mutation|recipe|workflow|remote_job_imported|procedure/.test(text)) return 'procedural';
+  if (/git|terminal|local-agent|workspace|file|repo|diff/.test(text)) return 'repo';
+  if (/corrected|accepted|interrupted|rejected|undo|prefer|too_|feedback|不懂|啰嗦|太慢|冒进/.test(text)) return 'preference';
+  if (/tournament|gene|policy|reward|yesness|bandit/.test(text)) return 'policy';
+  if (/hook|browser|mobile|codex|claude|gemini|chat|message|turn/.test(text)) return 'episodic';
+  return undefined;
+}
+
+function signalMatchesExpert(signal: string, expert: MemoryExpertId): boolean {
+  const text = signal.toLowerCase();
+  switch (expert) {
+    case 'episodic':
+      return /hook|message|browser|mobile|codex|claude|gemini|chat|turn/.test(text);
+    case 'procedural':
+      return /gep|capsule|mutation|workflow|architecture|mcp|procedure|remote_compute/.test(text);
+    case 'validation':
+      return /validation|command|test|build|risk|permission|outcome|failure/.test(text);
+    case 'repo':
+      return /git|terminal|repo|workspace|file|local|desktop/.test(text);
+    case 'preference':
+      return /prefer|too|feedback|correction|accepted|interrupted|concise|fast|shallow/.test(text);
+    case 'policy':
+      return /gene|policy|reward|yesness|bandit|strategy/.test(text);
+    default:
+      return false;
+  }
+}
+
+function firstMemory(
+  events: EvolutionState['timeline'],
+  type: MemoryRecall['type'],
+  title: string,
+  confidence: number
+): MemoryRecall | undefined {
+  const event = events[0];
+  return event ? timelineMemory(event, type, title, confidence) : undefined;
+}
+
+function timelineMemory(
+  event: EvolutionState['timeline'][number],
+  type: MemoryRecall['type'],
+  title: string,
+  confidence: number
+): MemoryRecall {
+  return {
+    id: `mem_${event.id}`,
+    type,
+    title,
+    body: cleanMemoryText(event.summary),
+    source: event.type,
+    confidence: clampScore((event.score + confidence) / 2)
+  };
+}
+
+function uniqueSignals(signals: string[]): string[] {
+  return [...new Set(signals.map((signal) => signal.trim()).filter(Boolean))].slice(0, 16);
+}
+
+function memorySearchText(event?: EvolutionState['timeline'][number]): string {
+  if (!event) return '';
+  return `${event.type} ${event.summary} ${(event.signals ?? []).join(' ')}`;
+}
+
+function cleanMemoryText(text: string): string {
+  return text.replace(/^Roadshow\s+/i, '').replace(/\broadshow\b/gi, 'demo').trim();
+}
+
+async function readGepAssetCounts(): Promise<{ genes: number; capsules: number; events: number; latestAsset?: string }> {
+  const assetsDir = process.env.GEP_ASSETS_DIR ? resolveFromProjectRoot(process.env.GEP_ASSETS_DIR) : resolveFromProjectRoot('assets');
+  const [genes, capsules, events] = await Promise.all([
+    readJsonCollectionCount(resolve(assetsDir, 'genes.json'), 'genes'),
+    readJsonCollectionCount(resolve(assetsDir, 'capsules.json'), 'capsules'),
+    readJsonlAssetCount(resolve(assetsDir, 'events.jsonl'))
+  ]);
+  return {
+    genes,
+    capsules,
+    events: events.count,
+    latestAsset: events.latestAsset
+  };
+}
+
+async function readJsonCollectionCount(path: string, key: string): Promise<number> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    if (Array.isArray(parsed)) return parsed.length;
+    if (isRecord(parsed) && Array.isArray(parsed[key])) return parsed[key].length;
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
+async function readJsonlAssetCount(path: string): Promise<{ count: number; latestAsset?: string }> {
+  try {
+    const lines = (await readFile(path, 'utf8')).split('\n').map((line) => line.trim()).filter(Boolean);
+    const latestRaw = lines.at(-1);
+    let latestAsset: string | undefined;
+    if (latestRaw) {
+      const parsed = JSON.parse(latestRaw) as unknown;
+      if (isRecord(parsed)) {
+        const type = typeof parsed.type === 'string' ? parsed.type : 'GEPAsset';
+        const id = typeof parsed.id === 'string' ? parsed.id : (typeof parsed.asset_id === 'string' ? parsed.asset_id : 'latest');
+        latestAsset = `${type}:${id}`;
+      }
+    }
+    return { count: lines.length, latestAsset };
+  } catch {
+    return { count: 0 };
+  }
+}
+
 function defaultTrainingObjective(type: RemoteJobType): string {
   switch (type) {
     case 'preference_train':
@@ -754,13 +1160,18 @@ function defaultTrainingObjective(type: RemoteJobType): string {
 function buildAdvisorTrace(input: string, context: AdvisorContext, advisor: Awaited<ReturnType<typeof prepareAdvisor>>): Array<EvolutionState['timeline'][number]> {
   const source = normalizeHookText(context.source, 'manual');
   const event = normalizeHookText(context.event, 'advisor_prepare');
-  const signals = advisor.signal.signals;
+  const signals = uniqueSignals([
+    ...advisor.signal.signals,
+    advisor.memoryRoute?.activeExpert ? `memory_${advisor.memoryRoute.activeExpert}` : '',
+    'memory_moe_routed'
+  ]);
   const semantic = advisor.signal.semantic;
   const llmLabel = advisor.signalExtraction.llm.used ? 'EvoMap LLM' : 'seed parser';
+  const memoryTag = advisor.memoryRoute ? ` via memory:${advisor.memoryRoute.activeExpert}` : '';
   return [
     runtimeTimelineEvent({
       type: 'advisor_injected',
-      summary: `${source}:${event} injected ${advisor.gene.id} advisor prompt`,
+      summary: `${source}:${event} injected ${advisor.gene.id} advisor prompt${memoryTag}`,
       score: advisor.predictedSatisfaction,
       geneId: advisor.gene.id,
       signals
@@ -801,8 +1212,25 @@ function clampScore(value: number): number {
 
 async function prepareAdvisor(input: string, state: EvolutionState, context: AdvisorContext) {
   const seedSignal = extractSignals(input);
-  const signalExtraction = await extractSignalsWithEvoMapLlm(input, seedSignal);
+  const signalExtraction = shouldUseFastAdvisor(context)
+    ? {
+      seed: seedSignal,
+      llm: {
+        source: 'evomap_llm' as const,
+        used: false,
+        enabled: false,
+        signals: [],
+        error: 'fast_advisor_mode'
+      },
+      merged: seedSignal
+    }
+    : await extractSignalsWithEvoMapLlm(input, seedSignal);
   const signal = signalExtraction.merged;
+  const memoryRoute = await buildMemoryRoute(state as RuntimeEvolutionState, {
+    input,
+    source: normalizeHookText(context.source, 'advisor'),
+    signals: signal.signals
+  });
   const baseDecision = selectBehaviorGeneDecision(state, signal);
   const { decision: policyDecision, insight: trainedModelInsight } = await enhanceDecisionWithTrainedModels({
     rawInput: input,
@@ -817,10 +1245,23 @@ async function prepareAdvisor(input: string, state: EvolutionState, context: Adv
     signal,
     gene,
     predictedSatisfaction,
-    trainedModelInsight
+    trainedModelInsight,
+    memoryRoute
   });
 
-  return { signalExtraction, signal, policyDecision, trainedModelInsight, gene, predictedSatisfaction, advisorPrompt };
+  return { signalExtraction, signal, policyDecision, trainedModelInsight, gene, predictedSatisfaction, memoryRoute, advisorPrompt };
+}
+
+function shouldUseFastAdvisor(context: AdvisorContext): boolean {
+  const metadata = context.metadata;
+  return Boolean(
+    metadata
+    && (
+      metadata.evomateFastSmoke === true
+      || metadata.fastAdvisor === true
+      || metadata.skipLlm === true
+    )
+  );
 }
 
 function buildAdvisorPrompt(input: {
@@ -829,8 +1270,9 @@ function buildAdvisorPrompt(input: {
   gene: EvolutionState['activeGenes'][number];
   predictedSatisfaction: number;
   trainedModelInsight?: Awaited<ReturnType<typeof enhanceDecisionWithTrainedModels>>['insight'];
+  memoryRoute?: MemoryRouteResponse;
 }): string {
-  const { context, signal, gene, predictedSatisfaction, trainedModelInsight } = input;
+  const { context, signal, gene, predictedSatisfaction, trainedModelInsight, memoryRoute } = input;
   const semantic = signal.semantic;
   const yes = dynamicYesContract(gene.id, predictedSatisfaction, semantic.confidence);
   const geneOverlay = geneBehaviorOverlay(gene.id);
@@ -838,17 +1280,63 @@ function buildAdvisorPrompt(input: {
   const confidencePercent = Math.round(semantic.confidence * 100);
   const signals = signal.signals.slice(0, 5).join(',') || 'none';
   const modelBadge = trainedModelInsight?.loaded ? 'ML:reward+policy+memory' : 'ML:seed';
+  const memoryLine = advisorMemoryLine(memoryRoute);
+  const gepLine = advisorGepLine(memoryRoute);
 
   return [
     '╭─ EvoMate Dynamic Yes · apply silently to this turn',
     `│ YES ${yesBar(predictedSatisfaction)} ${yesPercent}% ${yes.band} · ${yes.shortAutonomy}`,
     `│ MODE ${geneIcon(gene.id)} ${compactText(gene.label, 30)} · ${geneOverlay.shortShape}`,
+    memoryLine,
+    gepLine,
     `│ FLOW ${runtimeFlowGlyph()} · hook→semantic→tournament→advisor→GEP`,
     `│ ACT  ${geneOverlay.actionRule}`,
     `│ ASK  ${yes.shortClarification}`,
     `│ TRACE ${normalizeHookText(context.source, 'manual')}/${normalizeHookText(context.event, 'advisor_prepare')} · ${semantic.taskType}/${semantic.intent} · risk:${semantic.riskLevel} · conf:${confidencePercent}% · ${modelBadge}`,
     `╰─ signals:${signals}`
   ].join('\n');
+}
+
+function advisorMemoryLine(memoryRoute?: MemoryRouteResponse): string {
+  if (!memoryRoute) return '│ MEM  no-route · use current turn only';
+  const topMemory = memoryRoute.recalledMemories[0];
+  const active = memoryRoute.experts.find((expert) => expert.id === memoryRoute.activeExpert);
+  const expert = `${memoryRoute.activeExpert}:${Math.round(memoryRoute.confidence * 100)}%`;
+  const evidence = compactText(topMemory?.body || active?.evidence || 'no memory recalled', 92);
+  return `│ MEM  ${expert} · ${evidence}`;
+}
+
+function advisorGepLine(memoryRoute?: MemoryRouteResponse): string {
+  if (!memoryRoute) return '│ GEP  pending · no asset proof yet';
+  const proof = memoryRoute.gepProof;
+  const latest = proof.latestAsset ? ` · latest:${compactText(proof.latestAsset, 44)}` : '';
+  return `│ GEP  genes:${proof.genes} capsules:${proof.capsules} events:${proof.events}${latest}`;
+}
+
+function compactMemoryRoute(memoryRoute: MemoryRouteResponse): Record<string, unknown> {
+  return {
+    schemaVersion: memoryRoute.schemaVersion,
+    mode: memoryRoute.mode,
+    activeExpert: memoryRoute.activeExpert,
+    confidence: memoryRoute.confidence,
+    experts: memoryRoute.experts.slice(0, 4).map((expert) => ({
+      id: expert.id,
+      label: expert.label,
+      score: expert.score,
+      status: expert.status,
+      evidence: compactText(expert.evidence, 160)
+    })),
+    recalledMemories: memoryRoute.recalledMemories.slice(0, 4).map((memory) => ({
+      type: memory.type,
+      title: memory.title,
+      body: compactText(memory.body, 180),
+      source: memory.source,
+      confidence: memory.confidence
+    })),
+    routePlan: memoryRoute.routePlan,
+    gepProof: memoryRoute.gepProof,
+    latestEventId: memoryRoute.latestEventId
+  };
 }
 
 function yesBar(value: number): string {
@@ -967,7 +1455,8 @@ function normalizeAgentEvent(input: AgentEventInput): AgentEventInput {
     event: normalizeHookText(input.event, 'user_message'),
     workspace: input.workspace || input.cwd,
     sessionId: input.sessionId ? normalizeHookText(input.sessionId, 'local_session', 120) : undefined,
-    content: input.content?.slice(0, 12000)
+    content: input.content?.slice(0, 12000),
+    metadata: input.metadata
   };
 }
 

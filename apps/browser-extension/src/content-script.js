@@ -13,6 +13,8 @@
   let lastUrl = location.href;
   let seen = loadSeen();
   let latestPromptDraft = { text: '', at: 0, selector: '' };
+  let bypassNextSubmit = false;
+  let injectionInFlight = false;
   const provider = detectProvider(location.hostname);
   const sessionId = getSessionId();
 
@@ -51,7 +53,7 @@
 
   async function init() {
     const reply = await chrome.runtime.sendMessage({ type: 'evomate:get-config' }).catch(() => null);
-    config = reply?.config || { enabled: true, captureAssistant: true, captureUser: true, captureUnknown: false, minChars: 12, maxChars: 6000, clientRedaction: true };
+    config = reply?.config || { enabled: true, injectAdvisor: false, captureAssistant: true, captureUser: true, captureUnknown: false, minChars: 12, maxChars: 6000, clientRedaction: true };
     mountBadge();
     startObserver();
     installInputHooks();
@@ -120,9 +122,19 @@
     document.addEventListener('keydown', (event) => {
       rememberPromptDraftFromEvent(event);
       if (!config?.enabled || event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (bypassNextSubmit) {
+        bypassNextSubmit = false;
+        return;
+      }
       const editable = findActivePromptInput();
       const text = readInputText(editable) || freshDraftText();
       if (!isCapturablePromptText(text)) return;
+      if (shouldInjectAdvisor(text)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        handleEvolutionSubmit({ text, reason: 'input_enter', editable });
+        return;
+      }
       capturePromptText(text, 'input_enter', editable);
     }, true);
 
@@ -132,13 +144,176 @@
         if (!config?.enabled) return;
         const target = event.target instanceof Element ? event.target : null;
         const button = target?.closest('button,[role="button"]');
-        if (!button || !isSendButton(button)) return;
+        if (!button) return;
+        const feedbackAction = inferFeedbackAction(button);
+        if (feedbackAction) {
+          captureFeedbackAction(button, feedbackAction);
+          return;
+        }
+        if (!isSendButton(button)) return;
+        if (bypassNextSubmit) {
+          bypassNextSubmit = false;
+          return;
+        }
         const editable = findActivePromptInput() || findNearestPromptInput(button);
         const text = readInputText(editable) || freshDraftText();
         if (!isCapturablePromptText(text)) return;
+        if (shouldInjectAdvisor(text)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          handleEvolutionSubmit({ text, reason: `send_${eventName}`, editable, button });
+          return;
+        }
         capturePromptText(text, `send_${eventName}`, editable || button);
       }, true);
     });
+  }
+
+  function shouldInjectAdvisor(text) {
+    if (config?.injectAdvisor === false) return false;
+    if (injectionInFlight) return false;
+    const clean = cleanText(text);
+    if (!clean || clean.includes('EvoMate Advisor')) return false;
+    if (/^\/(help|history|train|status)\b/i.test(clean)) return false;
+    return true;
+  }
+
+  async function handleEvolutionSubmit({ text, reason, editable, button }) {
+    if (injectionInFlight) return;
+    injectionInFlight = true;
+    pulseBadge('send');
+    try {
+      capturePromptText(text, reason, editable || button);
+      const advisor = await requestAdvisor(text);
+      const injected = formatAdvisorInjection(advisor, text);
+      const injectedIntoInput = Boolean(injected && editable && setInputText(editable, injected));
+      if (!injectedIntoInput) {
+        if (injected) await copyInjectionToClipboard(injected);
+        showInjectionToast(injected ? 'EvoMate advisor copied — paste into prompt' : 'EvoMate advisor unavailable');
+        pulseBadge(injected ? 'inject' : 'err');
+        injectionInFlight = false;
+        return;
+      }
+      latestPromptDraft = { text: injected, at: Date.now(), selector: describeNode(editable) || 'evomate.injected.prompt' };
+      pulseBadge('inject');
+      showInjectionToast('EvoMate advisor injected');
+      window.setTimeout(() => {
+        bypassNextSubmit = true;
+        const sendButton = button || findNearestSendButton(editable) || findGlobalSendButton();
+        if (sendButton) sendButton.click();
+        injectionInFlight = false;
+      }, 120);
+    } catch {
+      pulseBadge('err');
+      injectionInFlight = false;
+    }
+  }
+
+  async function requestAdvisor(input) {
+    return await chrome.runtime.sendMessage({
+      type: 'evomate:advisor-prepare',
+      input,
+      source: `browser-extension:${provider}`,
+      provider,
+      pageTitle: document.title,
+      url: location.href,
+      sessionId,
+      workspace: location.hostname
+    }).catch((error) => ({ ok: false, error: String(error) }));
+  }
+
+  function formatAdvisorInjection(reply, originalText) {
+    if (!reply?.ok) return '';
+    const compact = compactAdvisorPrompt(reply.advisorPrompt || '');
+    if (!compact) return '';
+    return [
+      'EvoMate Advisor — apply silently for this turn.',
+      compact,
+      '',
+      'User request:',
+      originalText
+    ].join('\n');
+  }
+
+  function compactAdvisorPrompt(prompt) {
+    const lines = String(prompt || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => /Selected Behavior Gene|Predicted Yesness|Semantic:|Signals:|^\d+\.|Guardrail|ACT|ASK|MODE|YES|MEM|GEP/i.test(line));
+    return lines.join('\n').slice(0, 1200);
+  }
+
+  function setInputText(node, text) {
+    if (!node) return false;
+    node.focus?.();
+    const clean = cleanText(text);
+    if ('value' in node) {
+      const proto = Object.getPrototypeOf(node);
+      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (descriptor?.set) descriptor.set.call(node, text);
+      else node.value = text;
+      node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+      node.dispatchEvent(new Event('change', { bubbles: true }));
+      return readInputText(node).includes('EvoMate Advisor') || readInputText(node) === clean;
+    }
+    try {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      document.execCommand('insertText', false, text);
+    } catch {
+      node.textContent = text;
+    }
+    if (!readInputText(node).includes('EvoMate Advisor')) node.textContent = text;
+    node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+    return readInputText(node).includes('EvoMate Advisor') || readInputText(node) === clean;
+  }
+
+  async function copyInjectionToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function showInjectionToast(text) {
+    const old = document.getElementById('evomate-injection-toast');
+    old?.remove();
+    const toast = document.createElement('div');
+    toast.id = 'evomate-injection-toast';
+    toast.textContent = text;
+    toast.style.cssText = [
+      'position:fixed',
+      'right:14px',
+      'bottom:62px',
+      'z-index:2147483647',
+      'border:1px solid rgba(141,255,204,.28)',
+      'border-radius:18px',
+      'background:rgba(3,5,10,.86)',
+      'backdrop-filter:blur(16px)',
+      'box-shadow:0 18px 70px rgba(0,0,0,.36)',
+      'color:#d8ffe9',
+      'font:650 12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+      'padding:11px 13px',
+      'max-width:260px'
+    ].join(';');
+    document.documentElement.appendChild(toast);
+    window.setTimeout(() => toast.remove(), 2600);
+  }
+
+  function findNearestSendButton(anchor) {
+    const root = anchor?.closest?.('form, main, [role="main"], body') || document;
+    return Array.from(root.querySelectorAll?.('button,[role="button"]') || []).find((button) => button instanceof HTMLElement && isVisible(button) && isSendButton(button)) || null;
+  }
+
+  function findGlobalSendButton() {
+    return Array.from(document.querySelectorAll('button,[role="button"]')).find((button) => button instanceof HTMLElement && isVisible(button) && isSendButton(button)) || null;
   }
 
   function rememberPromptDraftFromEvent(event) {
@@ -229,6 +404,41 @@
   function isSendButton(button) {
     const signal = `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.textContent || ''} ${button.className || ''}`.toLowerCase();
     return /send|submit|发送|提交|arrow_upward|send-button/.test(signal);
+  }
+
+  function inferFeedbackAction(button) {
+    const signal = `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.textContent || ''} ${button.className || ''}`.toLowerCase();
+    if (/thumbs?\s*up|like|good response|有用|赞|满意/.test(signal)) {
+      return { eventKind: 'feedback', kind: 'accepted', outcome: 'accepted', score: 0.9, label: 'thumbs_up', signals: ['explicit_positive_feedback', 'web_ai_like'] };
+    }
+    if (/thumbs?\s*down|dislike|bad response|没用|差评|不满意/.test(signal)) {
+      return { eventKind: 'feedback', kind: 'corrected', outcome: 'corrected', score: 0.16, label: 'thumbs_down', signals: ['explicit_negative_feedback', 'web_ai_dislike'] };
+    }
+    if (/copy|复制/.test(signal)) {
+      return { eventKind: 'copy', kind: 'accepted', outcome: 'accepted', score: 0.78, label: 'copy', signals: ['implicit_positive_feedback', 'copied_answer'] };
+    }
+    if (/regenerate|try again|重新生成|再试|换一个/.test(signal)) {
+      return { eventKind: 'regenerate', kind: 'corrected', outcome: 'corrected', score: 0.24, label: 'regenerate', signals: ['implicit_negative_feedback', 'regenerated_answer', 'intent_miss'] };
+    }
+    if (/stop|停止|中止/.test(signal)) {
+      return { eventKind: 'stop', kind: 'interrupted', outcome: 'interrupted', score: 0.18, label: 'stop', signals: ['implicit_negative_feedback', 'stopped_generation', 'too_slow_or_wrong'] };
+    }
+    return null;
+  }
+
+  function captureFeedbackAction(button, action) {
+    const content = `${provider}:${action.label} feedback on current AI response`;
+    const hash = hashText([provider, action.label, Date.now().toString().slice(0, -3)].join('\n'));
+    const event = toHookEvent({ role: 'feedback', text: content, selector: describeNode(button) }, content, hash, `feedback_${action.label}`);
+    event.eventKind = action.eventKind;
+    event.direction = 'feedback';
+    event.kind = action.kind;
+    event.outcome = action.outcome;
+    event.score = action.score;
+    event.signals = ['browser_extension', 'web_ai_feedback', `provider_${provider}`, ...action.signals];
+    chrome.runtime.sendMessage({ type: 'evomate:hook-events', events: [event] }).then((receipt) => {
+      pulseBadge(receipt?.ok ? 'ok' : 'err');
+    }).catch(() => pulseBadge('err'));
   }
 
   async function captureSelection() {
@@ -369,7 +579,7 @@
         if (node.querySelector('textarea,input,[contenteditable="true"]')) return false;
         const text = cleanText(node.innerText || node.textContent || '');
         if (!text) return false;
-        if (/^(你说|you said|gemini 说|gemini said)/i.test(text)) return true;
+        if (/^(你说|you said|gemini 说|gemini said)\b/i.test(text)) return true;
         if (text.length >= 24 && !isLikelyNavigation(node, text)) return true;
         return false;
       })
@@ -395,8 +605,8 @@
     if (attrRole === 'assistant') return 'assistant';
 
     const ownText = cleanText(node.innerText || node.textContent || '').toLowerCase();
-    if (/^(你说|you said)/.test(ownText)) return 'user';
-    if (/^(gemini 说|gemini said)/.test(ownText)) return 'assistant';
+    if (/^(你说|you said)\b/.test(ownText)) return 'user';
+    if (/^(gemini 说|gemini said)\b/.test(ownText)) return 'assistant';
 
     const tagSignal = `${node.tagName || ''} ${node.closest('user-query') ? 'user-query' : ''} ${node.closest('model-response') ? 'model-response' : ''} ${node.closest('message-content') ? 'message-content' : ''}`.toLowerCase();
     if (/user-query/.test(tagSignal)) return 'user';
@@ -502,8 +712,8 @@
   function pulseBadge(state) {
     const badge = document.getElementById('evomate-web-hook-badge');
     if (!badge) return;
-    const labels = { send: 'EvoMate sending…', ok: 'EvoMate captured ✓', err: 'EvoMate failed !' };
-    const colors = { send: '#20e6ff', ok: '#8dffcc', err: '#ff8b8b' };
+    const labels = { send: 'EvoMate sending…', inject: 'EvoMate injected ↗', ok: 'EvoMate captured ✓', err: 'EvoMate failed !' };
+    const colors = { send: '#20e6ff', inject: '#8dffcc', ok: '#8dffcc', err: '#ff8b8b' };
     const old = badge.textContent;
     badge.textContent = labels[state] || old;
     badge.style.color = colors[state] || '#8dffcc';

@@ -178,6 +178,7 @@ export function compactResponse(response: HookResponse, extra: Record<string, un
     geneId: response.gene?.id,
     geneLabel: response.gene?.label,
     predictedSatisfaction: response.predictedSatisfaction,
+    memoryRoute: response.memoryRoute,
     advisorPrompt: response.advisorPrompt,
     ...extra
   };
