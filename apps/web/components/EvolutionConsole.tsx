@@ -692,7 +692,7 @@ function HookImpactFx({ event }: { event?: EvolutionTimelineItem }) {
   const triggerImpact = useCallback((nextImpact: EvolutionTimelineItem) => {
     if (clearTimer.current) window.clearTimeout(clearTimer.current);
     setImpact(nextImpact);
-    clearTimer.current = window.setTimeout(() => setImpact(null), 8000);
+    clearTimer.current = window.setTimeout(() => setImpact(null), 4200);
   }, []);
 
   useEffect(() => {
@@ -726,43 +726,17 @@ function HookImpactFx({ event }: { event?: EvolutionTimelineItem }) {
   return (
     <div key={impact.id} className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
       <div className={`absolute inset-0 ${local ? 'evomate-local-screen-flash' : 'evomate-hook-screen-flash'}`} />
-      <div className="absolute left-1/2 top-[42%] h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#20e6ff]/58 evomate-hook-shockwave" />
-      <div className="absolute left-1/2 top-[42%] h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#20e6ff]/34 evomate-hook-shockwave-delayed" />
-      {Array.from({ length: 14 }).map((_, index) => (
-        <span
-          key={index}
-          className="absolute left-1/2 top-[42%] h-1.5 w-1.5 rounded-full bg-[#20e6ff] shadow-[0_0_18px_rgba(32,230,255,0.85)] evomate-hook-particle"
-          style={{
-            '--evomate-angle': `${index * 25.7}deg`,
-            '--evomate-distance': `${88 + (index % 5) * 22}px`,
-            animationDelay: `${index * 22}ms`
-          } as CSSProperties}
-        />
-      ))}
-      <div className="absolute inset-x-4 top-[28%] mx-auto max-w-[560px] text-center evomate-hook-hero">
-        <p className="text-[11px] uppercase tracking-[0.34em] text-[#20e6ff]/78">
-          {local ? 'local activity captured' : 'hook captured'}
-        </p>
-        <p className="mt-3 text-4xl font-semibold tracking-[-0.08em] text-white drop-shadow-[0_0_34px_rgba(32,230,255,0.34)]">
-          {local ? 'Workflow Signal → Evolution' : 'Signal Landed'}
-        </p>
-        <div className="mx-auto mt-5 flex max-w-[520px] items-center justify-center gap-2 rounded-full border border-[#20e6ff]/22 bg-black/42 px-4 py-2 text-xs text-white/58 backdrop-blur-xl">
-          <span>{local ? 'Mac / Git / Terminal' : 'Browser / Mobile / Codex'}</span>
-          <span className="text-[#20e6ff]">→</span>
-          <span>Hook Protocol</span>
-          <span className="text-[#20e6ff]">→</span>
-          <span>EvoMap GEP</span>
-        </div>
-      </div>
-      <div className="absolute inset-x-4 top-6 mx-auto max-w-[480px] rounded-[26px] border border-[#20e6ff]/30 bg-[#06101a]/85 p-4 shadow-[0_24px_120px_rgba(32,230,255,0.16)] backdrop-blur-2xl evomate-hook-toast">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#20e6ff]/28 bg-[#20e6ff]/10 text-[#20e6ff]">
-            <RadioTower className="h-5 w-5" />
+      <div className="evomate-hook-edge-pulse absolute right-0 top-20 h-44 w-px bg-[#20e6ff]/65 shadow-[0_0_34px_rgba(32,230,255,0.6)]" />
+      <div className="absolute inset-x-4 top-4 mx-auto w-[min(360px,calc(100vw-28px))] overflow-hidden rounded-[22px] border border-[#20e6ff]/34 bg-[#06101a]/90 p-3 shadow-[0_20px_80px_rgba(32,230,255,0.18)] backdrop-blur-xl evomate-hook-toast">
+        <div className="absolute inset-x-0 top-0 h-px bg-[#20e6ff]/65 evomate-hook-toast-progress" />
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-[#20e6ff]/24 bg-[#20e6ff]/10 text-[#20e6ff]">
+            <RadioTower className="h-4 w-4" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[#20e6ff]/70">hook captured</p>
-            <p className="mt-1 truncate text-sm font-semibold text-white">{hookTitle(impact)}</p>
-            <p className="mt-1 truncate text-xs text-white/45">{impact.summary}</p>
+            <p className="text-[9px] uppercase tracking-[0.2em] text-[#20e6ff]/78">hook captured</p>
+            <p className="mt-0.5 truncate text-[13px] font-semibold text-white">{hookTitle(impact)}</p>
+            <p className="mt-0.5 truncate text-[11px] text-white/52">{impact.summary}</p>
           </div>
         </div>
       </div>

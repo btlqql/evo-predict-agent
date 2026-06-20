@@ -356,18 +356,17 @@ textarea {
 }
 
 .evomate-hook-screen-flash {
-  animation: evomateHookScreenFlash 4.8s ease-out both;
+  animation: evomateHookScreenFlash 2.2s ease-out both;
   background:
-    radial-gradient(circle at 50% 42%, rgba(32, 230, 255, 0.32), transparent 28%),
-    radial-gradient(circle at 50% 42%, rgba(32, 230, 255, 0.16), transparent 44%);
+    linear-gradient(90deg, transparent 0%, rgba(32, 230, 255, 0.05) 88%, rgba(32, 230, 255, 0.16) 100%),
+    radial-gradient(circle at 94% 18%, rgba(32, 230, 255, 0.14), transparent 20%);
 }
 
 .evomate-local-screen-flash {
-  animation: evomateLocalScreenFlash 6.8s ease-out both;
+  animation: evomateLocalScreenFlash 2.4s ease-out both;
   background:
-    radial-gradient(circle at 50% 34%, rgba(32, 230, 255, 0.34), transparent 28%),
-    radial-gradient(circle at 50% 48%, rgba(32, 230, 255, 0.2), transparent 48%),
-    linear-gradient(180deg, rgba(32,230,255,0.1), rgba(2,3,7,0.04) 44%, rgba(32,230,255,0.08));
+    linear-gradient(90deg, transparent 0%, rgba(32, 230, 255, 0.055) 86%, rgba(32, 230, 255, 0.16) 100%),
+    radial-gradient(circle at 94% 18%, rgba(32, 230, 255, 0.14), transparent 22%);
 }
 
 .evomate-hook-shockwave {
@@ -383,11 +382,24 @@ textarea {
 }
 
 .evomate-hook-toast {
-  animation: evomateHookToast 7.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: evomateHookToast 3.95s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.evomate-hook-toast-progress {
+  animation: evomateHookToastProgress 3.75s linear both;
+}
+
+.evomate-hook-edge-pulse {
+  animation: evomateHookEdgePulse 3.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .evomate-hook-hero {
   animation: evomateHookHero 6.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes evomateHookToastProgress {
+  0% { transform: translateX(-100%); opacity: 0.9; }
+  100% { transform: translateX(0); opacity: 0.2; }
 }
 
 .evomate-graph-node {
@@ -476,14 +488,14 @@ textarea {
 
 @keyframes evomateHookScreenFlash {
   0% { opacity: 0; }
-  12% { opacity: 1; }
+  12% { opacity: 0.55; }
   100% { opacity: 0; }
 }
 
 @keyframes evomateLocalScreenFlash {
   0% { opacity: 0; filter: saturate(1); }
-  8% { opacity: 1; filter: saturate(1.55); }
-  36% { opacity: 0.92; filter: saturate(1.22); }
+  8% { opacity: 0.5; filter: saturate(1.25); }
+  36% { opacity: 0.34; filter: saturate(1.1); }
   100% { opacity: 0; filter: saturate(1); }
 }
 
@@ -514,15 +526,30 @@ textarea {
 
 @keyframes evomateHookToast {
   0% {
-    transform: translateY(-20px) scale(0.96);
+    transform: translateY(-10px) scale(0.98);
     opacity: 0;
   }
-  10%, 88% {
+  10%, 78% {
     transform: translateY(0) scale(1);
     opacity: 1;
   }
   100% {
-    transform: translateY(-12px) scale(0.98);
+    transform: translateY(-8px) scale(0.985);
+    opacity: 0;
+  }
+}
+
+@keyframes evomateHookEdgePulse {
+  0% {
+    transform: scaleY(0.18);
+    opacity: 0;
+  }
+  16%, 62% {
+    transform: scaleY(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scaleY(0.35);
     opacity: 0;
   }
 }
