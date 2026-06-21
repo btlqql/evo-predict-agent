@@ -1,4 +1,4 @@
-const ids = ['enabled', 'apiUrl', 'captureUser', 'captureAssistant', 'captureUnknown', 'clientRedaction'];
+const ids = ['enabled', 'apiUrl', 'captureUser', 'captureAssistant', 'injectAdvisor', 'captureUnknown', 'clientRedaction'];
 const els = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
 const lastStatus = document.getElementById('lastStatus');
 const recentEl = document.getElementById('recent');
@@ -13,7 +13,7 @@ async function init() {
   renderStatus(status);
 
   els.enabled.addEventListener('change', () => savePatch({ enabled: els.enabled.checked }));
-  ['captureUser', 'captureAssistant', 'captureUnknown', 'clientRedaction'].forEach((id) => {
+  ['captureUser', 'captureAssistant', 'injectAdvisor', 'captureUnknown', 'clientRedaction'].forEach((id) => {
     els[id].addEventListener('change', () => savePatch({ [id]: els[id].checked }));
   });
   els.apiUrl.addEventListener('change', () => savePatch({ apiUrl: els.apiUrl.value }));
@@ -42,6 +42,7 @@ function applyConfig(config) {
   els.apiUrl.value = config.apiUrl || '';
   els.captureUser.checked = config.captureUser !== false;
   els.captureAssistant.checked = config.captureAssistant !== false;
+  els.injectAdvisor.checked = config.injectAdvisor !== false;
   els.captureUnknown.checked = config.captureUnknown === true;
   els.clientRedaction.checked = config.clientRedaction !== false;
 }

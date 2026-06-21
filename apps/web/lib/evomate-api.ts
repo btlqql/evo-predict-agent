@@ -1,13 +1,15 @@
 import type {
   AnalyzeResponse,
   EvolutionHistory,
+  EvolutionResultResponse,
   EvolutionState,
   FeedbackKind,
   FeedbackResponse,
+  MemoryRouteResponse,
   TrainResponse
 } from './types';
 
-export const CLOUD_API_URL = 'https://evomate-api-3mkana4zma-df.a.run.app';
+export const CLOUD_API_URL = 'https://evomate.yueanlab.com';
 export const LOCAL_API_URL = 'http://127.0.0.1:8787';
 export const API_URL = process.env.NEXT_PUBLIC_EVOMATE_API_URL || LOCAL_API_URL;
 
@@ -49,6 +51,14 @@ export function fetchEvolutionState() {
 
 export function fetchEvolutionHistory(limit = 24, jobs = true) {
   return requestJson<EvolutionHistory>(`/api/evolution/history?limit=${limit}&jobs=${jobs ? 'true' : 'false'}`, { timeoutMs: 4000 });
+}
+
+export function fetchMemoryRoute() {
+  return requestJson<MemoryRouteResponse>('/api/memory/route', { timeoutMs: 4000 });
+}
+
+export function fetchEvolutionResult() {
+  return requestJson<EvolutionResultResponse>('/api/evolution/result', { timeoutMs: 8000 });
 }
 
 export function analyzeInteraction(input: string, source = 'web_dashboard') {

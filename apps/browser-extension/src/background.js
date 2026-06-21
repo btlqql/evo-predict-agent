@@ -1,10 +1,11 @@
 const PROTOCOL_VERSION = 'evomate.hook.v1';
-const DEFAULT_API_URL = 'https://evomate-api-3mkana4zma-df.a.run.app/api/hook-events';
+const DEFAULT_API_URL = 'https://evomate.yueanlab.com/api/hook-events';
 const MAX_RECENT = 24;
 
 const defaultConfig = {
   enabled: true,
   apiUrl: DEFAULT_API_URL,
+  injectAdvisor: false,
   captureAssistant: true,
   captureUser: true,
   captureUnknown: false,
@@ -70,6 +71,12 @@ async function handleRuntimeMessage(message, sender) {
     return await postHookEvents(events, config);
   }
 
+  if (message.type === 'evomate:advisor-prepare') {
+    const config = await getConfig();
+    if (!config.enabled || config.injectAdvisor === false) return { ok: true, skipped: true, reason: 'advisor_injection_disabled' };
+    return await prepareAdvisor(message, config);
+  }
+
   if (message.type === 'evomate:capture-selection') {
     const tabId = message.tabId || sender.tab?.id;
     const tabUrl = message.url || sender.tab?.url || '';
@@ -78,6 +85,38 @@ async function handleRuntimeMessage(message, sender) {
   }
 
   return { ok: false, error: 'unknown_message_type' };
+}
+
+async function prepareAdvisor(message, config) {
+  const input = String(message.input || '').trim();
+  if (!input) return { ok: false, error: 'input_required' };
+  const advisorUrl = advisorUrlFromHookUrl(config.apiUrl || DEFAULT_API_URL);
+  await setBadge('send');
+  try {
+    const response = await fetch(advisorUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        input,
+        source: message.source || 'browser-extension',
+        event: 'browser_advisor_request',
+        workspace: message.workspace,
+        sessionId: message.sessionId,
+        metadata: {
+          provider: message.provider,
+          pageTitle: message.pageTitle,
+          url: message.url,
+          injection: 'prompt_prefix'
+        }
+      })
+    });
+    const body = await response.json().catch(() => ({}));
+    await setBadge(response.ok ? 'ok' : 'err');
+    return { ok: response.ok, status: response.status, advisorUrl, ...body };
+  } catch (error) {
+    await setBadge('err');
+    return { ok: false, status: 0, advisorUrl, error: String(error?.message || error) };
+  }
 }
 
 async function captureSelectionFromTab(tabId, tabUrl) {
@@ -271,6 +310,10 @@ function normalizeApiUrl(value) {
   const trimmed = String(value || '').trim();
   if (!trimmed) return DEFAULT_API_URL;
   return trimmed.endsWith('/api/hook-events') ? trimmed : `${trimmed.replace(/\/+$/, '')}/api/hook-events`;
+}
+
+function advisorUrlFromHookUrl(value) {
+  return normalizeApiUrl(value).replace(/\/api\/hook-events$/, '/api/advisor/prepare');
 }
 
 function detectProvider(value) {

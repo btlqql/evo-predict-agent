@@ -41,6 +41,15 @@ textarea {
   background-size: 44px 44px;
 }
 
+.graph-grid {
+  background-image:
+    radial-gradient(circle, rgba(141, 255, 204, 0.13) 1px, transparent 1.5px),
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 32px 32px, 96px 96px, 96px 96px;
+  background-position: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -53,23 +62,287 @@ textarea {
 }
 
 .evomate-pulse-ring {
-  animation: evomatePulseRing 2.8s ease-in-out infinite;
+  animation: evomatePulseRing 4.8s ease-in-out infinite;
+}
+
+.evomate-pulse-impact {
+  background:
+    conic-gradient(from -90deg, rgba(141,255,204,0.72) 0 var(--evomate-yes-angle), rgba(141,255,204,0.08) var(--evomate-yes-angle) 360deg);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  opacity: 0;
+  animation: evomatePulseImpact 1.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.evomate-pulse-dot {
+  transform-origin: 0 0;
+  animation: evomatePulseDot 1.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .evomate-scanline {
   animation: evomateScanline 4s ease-in-out infinite;
 }
 
+.evomate-flow-detail {
+  animation: evomateFlowDetail 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.evomate-detail-rise {
+  animation: evomateDetailRise 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.evomate-stage-packet {
+  animation: evomateStagePacket 1.7s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  box-shadow: 0 0 14px rgba(32, 230, 255, 0.42);
+}
+
+.evomate-hook-radar::before,
+.evomate-hook-radar::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid rgba(32, 230, 255, 0.28);
+  animation: evomateRadar 1.9s ease-out infinite;
+}
+
+.evomate-hook-radar::after {
+  animation-delay: 620ms;
+}
+
+.evomate-semantic-chip {
+  animation: evomateSemanticChip 1.8s ease-in-out infinite;
+}
+
+.evomate-vote-node {
+  animation: evomateVoteNode 1.9s ease-in-out infinite;
+}
+
+.evomate-voter-chip {
+  animation: evomateVoterChip 2s ease-in-out infinite;
+}
+
+.evomate-duel-card {
+  animation: evomateDuelCard 1.8s ease-in-out infinite;
+}
+
+.evomate-duel-vs {
+  animation: evomateDuelVs 1.8s ease-in-out infinite;
+  box-shadow: 0 0 16px rgba(32, 230, 255, 0.14);
+}
+
+.evomate-inject-beam {
+  animation: evomateInjectBeam 1.4s ease-in-out infinite;
+  box-shadow: 0 0 18px rgba(32, 230, 255, 0.28);
+}
+
+.evomate-gep-card {
+  animation: evomateGepCard 2s ease-in-out infinite;
+}
+
+.evomate-gep-write {
+  animation: evomateGepWrite 1.6s ease-in-out infinite;
+  box-shadow: 0 0 16px rgba(32, 230, 255, 0.24);
+}
+
+.evomate-train-bar {
+  height: 14px;
+  animation: evomateTrainBar 1s ease-in-out infinite;
+}
+
 @keyframes evomatePulseRing {
   0%, 100% {
+    transform: scale(0.985);
+    opacity: 0.42;
+    box-shadow: 0 0 10px rgba(141, 255, 204, 0.08);
+  }
+  50% {
+    transform: scale(1.018);
+    opacity: 0.68;
+    box-shadow: 0 0 18px rgba(141, 255, 204, 0.1);
+  }
+}
+
+@keyframes evomateFlowDetail {
+  0% {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes evomateDetailRise {
+  0% {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes evomateStagePacket {
+  0% {
+    transform: translateX(-20%);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateX(310%);
+    opacity: 0;
+  }
+}
+
+@keyframes evomateRadar {
+  0% {
+    transform: scale(0.62);
+    opacity: 0.68;
+  }
+  100% {
+    transform: scale(1.85);
+    opacity: 0;
+  }
+}
+
+@keyframes evomateSemanticChip {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.42;
+  }
+  45%, 62% {
+    transform: translateY(-2px);
+    opacity: 0.86;
+  }
+}
+
+@keyframes evomateVoteNode {
+  0%, 100% {
     transform: scale(0.92);
-    opacity: 0.45;
-    box-shadow: 0 0 20px rgba(32, 230, 255, 0.14);
+    opacity: 0.34;
   }
   50% {
     transform: scale(1.08);
-    opacity: 0.95;
-    box-shadow: 0 0 52px rgba(141, 255, 204, 0.22);
+    opacity: 0.78;
+  }
+}
+
+@keyframes evomateVoterChip {
+  0%, 100% {
+    opacity: 0.36;
+    transform: translateY(0);
+  }
+  45%, 60% {
+    opacity: 0.82;
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes evomateDuelCard {
+  0%, 100% {
+    opacity: 0.42;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 0.78;
+    filter: brightness(1.35);
+  }
+}
+
+@keyframes evomateDuelVs {
+  0%, 100% {
+    transform: scale(0.94);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 0.92;
+  }
+}
+
+@keyframes evomateInjectBeam {
+  0%, 100% {
+    transform: scaleX(0.3);
+    opacity: 0.28;
+  }
+  50% {
+    transform: scaleX(1);
+    opacity: 0.86;
+  }
+}
+
+@keyframes evomateGepCard {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.42;
+    filter: brightness(1);
+  }
+  50% {
+    transform: translateY(-2px);
+    opacity: 0.76;
+    filter: brightness(1.28);
+  }
+}
+
+@keyframes evomateGepWrite {
+  0% {
+    transform: scaleX(0.08);
+    transform-origin: left;
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.72;
+  }
+  100% {
+    transform: scaleX(1);
+    transform-origin: left;
+    opacity: 0;
+  }
+}
+
+@keyframes evomateTrainBar {
+  0%, 100% {
+    height: 12px;
+    opacity: 0.34;
+  }
+  50% {
+    height: 34px;
+    opacity: 0.82;
+  }
+}
+
+@keyframes evomatePulseImpact {
+  0% {
+    transform: scale(0.9) rotate(-10deg);
+    opacity: 0;
+    filter: blur(2px);
+  }
+  18% {
+    opacity: 0.78;
+    filter: blur(0);
+  }
+  100% {
+    transform: scale(1.08) rotate(0deg);
+    opacity: 0;
+    filter: blur(1px);
+  }
+}
+
+@keyframes evomatePulseDot {
+  0% {
+    transform: rotate(-90deg) translateX(28px) scale(0.72);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: rotate(calc(-90deg + var(--evomate-yes-angle))) translateX(28px) scale(0.9);
+    opacity: 0.18;
   }
 }
 
@@ -83,10 +356,17 @@ textarea {
 }
 
 .evomate-hook-screen-flash {
-  animation: evomateHookScreenFlash 4.8s ease-out both;
+  animation: evomateHookScreenFlash 2.2s ease-out both;
   background:
-    radial-gradient(circle at 50% 42%, rgba(141, 255, 204, 0.34), transparent 26%),
-    radial-gradient(circle at 50% 42%, rgba(32, 230, 255, 0.26), transparent 42%);
+    linear-gradient(90deg, transparent 0%, rgba(32, 230, 255, 0.05) 88%, rgba(32, 230, 255, 0.16) 100%),
+    radial-gradient(circle at 94% 18%, rgba(32, 230, 255, 0.14), transparent 20%);
+}
+
+.evomate-local-screen-flash {
+  animation: evomateLocalScreenFlash 2.4s ease-out both;
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(32, 230, 255, 0.055) 86%, rgba(32, 230, 255, 0.16) 100%),
+    radial-gradient(circle at 94% 18%, rgba(32, 230, 255, 0.14), transparent 22%);
 }
 
 .evomate-hook-shockwave {
@@ -102,40 +382,133 @@ textarea {
 }
 
 .evomate-hook-toast {
-  animation: evomateHookToast 7.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: evomateHookToast 3.95s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.evomate-hook-toast-progress {
+  animation: evomateHookToastProgress 3.75s linear both;
+}
+
+.evomate-hook-edge-pulse {
+  animation: evomateHookEdgePulse 3.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.evomate-hook-hero {
+  animation: evomateHookHero 6.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes evomateHookToastProgress {
+  0% { transform: translateX(-100%); opacity: 0.9; }
+  100% { transform: translateX(0); opacity: 0.2; }
+}
+
+.evomate-graph-node {
+  min-width: 148px;
+  max-width: 190px;
+  transform: translate(-50%, -50%);
+  border-width: 1px;
+  border-radius: 20px;
+  padding: 10px 12px;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 64px rgba(0, 0, 0, 0.32), inset 0 0 24px rgba(255, 255, 255, 0.025);
+  animation: evomateGraphFloat 7.8s ease-in-out infinite;
+}
+
+.evomate-graph-node-hot {
+  animation: evomateGraphNodeHot 2.8s ease-out both, evomateGraphFloat 7.8s ease-in-out infinite;
+}
+
+.evomate-graph-compact .evomate-graph-node {
+  min-width: 116px;
+  max-width: 132px;
+  border-radius: 16px;
+  padding: 8px 9px;
+}
+
+.evomate-graph-compact .evomate-graph-node span:first-child {
+  height: 22px;
+  width: 22px;
+  border-radius: 10px;
+}
+
+.evomate-graph-compact .evomate-graph-node p:first-child {
+  font-size: 10px;
+}
+
+.evomate-graph-compact .evomate-graph-node p:last-child {
+  font-size: 8px;
+}
+
+.evomate-graph-camera {
+  transition: transform 900ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+
+.evomate-graph-node-focused {
+  z-index: 5;
+  border-color: rgba(32, 230, 255, 0.64) !important;
+  box-shadow: 0 0 0 1px rgba(32, 230, 255, 0.22), 0 0 82px rgba(32, 230, 255, 0.36), inset 0 0 34px rgba(141, 255, 204, 0.08);
+}
+
+.evomate-graph-focus-lens {
+  animation: evomateGraphLens 2.6s ease-in-out infinite;
+  box-shadow: 0 0 80px rgba(32, 230, 255, 0.22), inset 0 0 80px rgba(141, 255, 204, 0.045);
+}
+
+.evomate-graph-edge {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 0.16;
+  vector-effect: non-scaling-stroke;
+}
+
+.evomate-graph-edge-hot {
+  stroke: url(#evomateGraphEdge);
+  stroke-width: 0.34;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 8px rgba(32, 230, 255, 0.6));
+  stroke-dasharray: 6 8;
+  animation: evomateGraphEdgeFlow 2.7s linear infinite;
 }
 
 @keyframes evomateHookCard {
   0% {
-    box-shadow: 0 0 0 rgba(141, 255, 204, 0);
+    box-shadow: 0 0 0 rgba(32, 230, 255, 0);
     transform: translateY(0) scale(1);
   }
   12% {
-    box-shadow: 0 0 46px rgba(141, 255, 204, 0.22), inset 0 0 32px rgba(32, 230, 255, 0.08);
+    box-shadow: 0 0 42px rgba(32, 230, 255, 0.16), inset 0 0 28px rgba(32, 230, 255, 0.06);
     transform: translateY(-1px) scale(1.01);
   }
   100% {
-    box-shadow: 0 0 0 rgba(141, 255, 204, 0);
+    box-shadow: 0 0 0 rgba(32, 230, 255, 0);
     transform: translateY(0) scale(1);
   }
 }
 
 @keyframes evomateHookScreenFlash {
   0% { opacity: 0; }
-  12% { opacity: 1; }
+  12% { opacity: 0.55; }
   100% { opacity: 0; }
+}
+
+@keyframes evomateLocalScreenFlash {
+  0% { opacity: 0; filter: saturate(1); }
+  8% { opacity: 0.5; filter: saturate(1.25); }
+  36% { opacity: 0.34; filter: saturate(1.1); }
+  100% { opacity: 0; filter: saturate(1); }
 }
 
 @keyframes evomateHookShockwave {
   0% {
     transform: translate(-50%, -50%) scale(0.3);
     opacity: 0.95;
-    box-shadow: 0 0 36px rgba(141, 255, 204, 0.34);
+    box-shadow: 0 0 36px rgba(32, 230, 255, 0.32);
   }
   100% {
     transform: translate(-50%, -50%) scale(8.5);
     opacity: 0;
-    box-shadow: 0 0 0 rgba(141, 255, 204, 0);
+    box-shadow: 0 0 0 rgba(32, 230, 255, 0);
   }
 }
 
@@ -153,15 +526,100 @@ textarea {
 
 @keyframes evomateHookToast {
   0% {
-    transform: translateY(-20px) scale(0.96);
+    transform: translateY(-10px) scale(0.98);
     opacity: 0;
   }
-  10%, 88% {
+  10%, 78% {
     transform: translateY(0) scale(1);
     opacity: 1;
   }
   100% {
+    transform: translateY(-8px) scale(0.985);
+    opacity: 0;
+  }
+}
+
+@keyframes evomateHookEdgePulse {
+  0% {
+    transform: scaleY(0.18);
+    opacity: 0;
+  }
+  16%, 62% {
+    transform: scaleY(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scaleY(0.35);
+    opacity: 0;
+  }
+}
+
+@keyframes evomateHookHero {
+  0% {
+    transform: translateY(18px) scale(0.94);
+    opacity: 0;
+    filter: blur(8px);
+  }
+  9%, 74% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
     transform: translateY(-12px) scale(0.98);
     opacity: 0;
+    filter: blur(5px);
+  }
+}
+
+@keyframes evomateGraphFloat {
+  0%, 100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+@keyframes evomateGraphLens {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(0.82);
+    opacity: 0.28;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.08);
+    opacity: 0.68;
+  }
+}
+
+@keyframes evomateGraphNodeHot {
+  0% {
+    box-shadow: 0 0 0 rgba(141, 255, 204, 0), inset 0 0 0 rgba(141, 255, 204, 0);
+  }
+  18% {
+    box-shadow: 0 0 70px rgba(141, 255, 204, 0.28), 0 0 120px rgba(32, 230, 255, 0.13), inset 0 0 36px rgba(141, 255, 204, 0.08);
+  }
+  100% {
+    box-shadow: 0 18px 64px rgba(0, 0, 0, 0.32), inset 0 0 24px rgba(255, 255, 255, 0.025);
+  }
+}
+
+@keyframes evomateGraphEdgeFlow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+@media (max-width: 640px) {
+  .evomate-graph-node {
+    min-width: 112px;
+    max-width: 132px;
+    border-radius: 16px;
+    padding: 8px 9px;
+  }
+
+  .evomate-graph-focus-lens {
+    height: 128px;
+    width: 128px;
   }
 }

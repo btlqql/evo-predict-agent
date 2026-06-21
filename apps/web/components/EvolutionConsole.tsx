@@ -10,21 +10,20 @@ import {
   Play,
   RadioTower,
   RefreshCcw,
-  ShieldAlert,
   Smartphone,
-  ThumbsDown,
-  ThumbsUp,
   Zap
 } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_URL, CLOUD_API_URL, fetchEvolutionHistory, fetchEvolutionState, queueTraining, sendFeedback } from '@/lib/evomate-api';
+import { API_URL, CLOUD_API_URL, fetchEvolutionHistory, fetchEvolutionResult, fetchEvolutionState, fetchMemoryRoute, queueTraining, sendFeedback } from '@/lib/evomate-api';
 import type {
   EvolutionHistory,
+  EvolutionResultResponse,
   EvolutionState,
   EvolutionTimelineItem,
   FeedbackKind,
   LiveStatus,
+  MemoryRouteResponse,
   TrainResponse
 } from '@/lib/types';
 
@@ -52,14 +51,27 @@ type HookBroadcastDetail = {
 type LiveModel = {
   state: EvolutionState | null;
   history: EvolutionHistory | null;
+  memoryRoute: MemoryRouteResponse | null;
+  evolutionResult: EvolutionResultResponse | null;
   status: LiveStatus;
   lastError: string | null;
   lastUpdatedAt: string | null;
   refresh: () => Promise<void>;
-  feedback: (kind: FeedbackKind, text?: string, score?: number) => Promise<void>;
+  feedback: (kind: FeedbackKind, text?: string, score?: number, signals?: string[]) => Promise<void>;
   train: (type?: 'preference_train' | 'policy_replay_eval' | 'evolution_gym_eval' | 'embedding_build') => Promise<void>;
   busy: 'feedback' | 'train' | null;
   trainReceipt: TrainResponse | null;
+};
+
+type FeedbackPreset = {
+  id: string;
+  label: string;
+  caption: string;
+  kind: FeedbackKind;
+  score: number;
+  signals: string[];
+  text: string;
+  tone: 'positive' | 'negative' | 'caution' | 'neutral';
 };
 
 const geneCatalog: GeneMeta[] = [
@@ -152,19 +164,95 @@ const pipeline: PipelineStage[] = [
   }
 ];
 
+const feedbackPresets: FeedbackPreset[] = [
+  {
+    id: 'hit',
+    label: '命中我',
+    caption: '方向正确',
+    kind: 'accepted',
+    score: 0.92,
+    signals: ['intent_hit', 'preferred_behavior_reinforced'],
+    text: '手机端反馈：这次命中我的意图，保持这个行为策略。',
+    tone: 'positive'
+  },
+  {
+    id: 'miss',
+    label: '不懂我',
+    caption: '意图偏了',
+    kind: 'corrected',
+    score: 0.18,
+    signals: ['intent_miss', 'needs_clarification'],
+    text: '手机端反馈：这次没有理解我的真实意图，下次先澄清再行动。',
+    tone: 'negative'
+  },
+  {
+    id: 'slow',
+    label: '太慢',
+    caption: '更快执行',
+    kind: 'corrected',
+    score: 0.36,
+    signals: ['too_slow', 'prefer_fast_execution'],
+    text: '手机端反馈：这次推进太慢，下次减少解释，更快给可执行结果。',
+    tone: 'neutral'
+  },
+  {
+    id: 'shallow',
+    label: '太浅',
+    caption: '需要深入',
+    kind: 'corrected',
+    score: 0.42,
+    signals: ['too_shallow', 'prefer_deeper_reasoning'],
+    text: '手机端反馈：这次分析太浅，下次需要更深入的推理和方案。',
+    tone: 'neutral'
+  },
+  {
+    id: 'risky',
+    label: '太冒进',
+    caption: '先确认',
+    kind: 'interrupted',
+    score: 0.16,
+    signals: ['too_risky', 'ask_before_execution'],
+    text: '手机端反馈：这次太冒进，涉及风险或大改动时先确认。',
+    tone: 'caution'
+  },
+  {
+    id: 'verbose',
+    label: '太啰嗦',
+    caption: '更简洁',
+    kind: 'corrected',
+    score: 0.32,
+    signals: ['too_verbose', 'prefer_concise_answer'],
+    text: '手机端反馈：这次太啰嗦，下次更短更直接。',
+    tone: 'neutral'
+  },
+  {
+    id: 'undo',
+    label: '撤回',
+    caption: '反向学习',
+    kind: 'undo',
+    score: 0.05,
+    signals: ['undo_requested', 'strong_negative_outcome'],
+    text: '手机端反馈：这次需要撤回，作为强负反馈写入策略。',
+    tone: 'negative'
+  }
+];
+
 export function MobileObserver() {
   const model = useEvoMateLive();
   const derived = useDerivedState(model.state, model.history);
+  const animatedYesness = useAnimatedNumber(derived.yesness);
+  const [selectedFlowKey, setSelectedFlowKey] = useState(pipeline[0].key);
+  const [feedbackExpanded, setFeedbackExpanded] = useState(true);
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#03050a] text-white">
       <ConsoleBackground />
       <HookImpactFx event={derived.latestHook} />
-      <section className="relative z-10 mx-auto flex min-h-screen w-full max-w-[480px] flex-col px-4 pb-28 pt-4">
+      <section className="relative z-10 mx-auto flex min-h-screen w-full max-w-[480px] flex-col px-4 pb-72 pt-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-[#20e6ff]/25 bg-[#20e6ff]/10">
-              <Smartphone className="h-4 w-4 text-[#20e6ff]" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04]">
+              <Smartphone className="h-4 w-4 text-white/58" />
             </div>
             <div>
               <p className="text-sm font-semibold tracking-[-0.04em]">EvoMate Pocket</p>
@@ -178,19 +266,25 @@ export function MobileObserver() {
 
         <HookBeacon event={derived.latestHook} status={model.status} />
 
+        <EvolutionGraphEntry event={derived.latest} yesness={derived.yesness} activeGeneName={derived.activeGene.name} />
+
+        <MemoryMoEPanel derived={derived} memoryRoute={model.memoryRoute} />
+
+        <EvolutionResultPanel derived={derived} memoryRoute={model.memoryRoute} evolutionResult={model.evolutionResult} />
+
         <section className="mt-4 overflow-hidden rounded-[30px] border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_28px_90px_rgba(0,0,0,0.42)]">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.24em] text-[#20e6ff]/75">yes pulse</p>
-              <h1 className="mt-2 text-6xl font-semibold leading-none tracking-[-0.09em] text-white">{pct(derived.yesness)}</h1>
+              <p className="text-[10px] uppercase tracking-[0.24em] text-[#8dffcc]/75">yes pulse</p>
+              <h1 className="mt-2 text-6xl font-semibold leading-none tracking-[-0.09em] text-white">{pct(animatedYesness)}</h1>
               <p className="mt-2 text-sm text-white/48">{derived.activeGene.name} · {yesMode(derived.yesness)}</p>
             </div>
-            <PulseOrb yesness={derived.yesness} status={model.status} eventKey={derived.latest?.id} />
+            <PulseOrb yesness={animatedYesness} status={model.status} eventKey={`${derived.latest?.id || 'idle'}:${pct(derived.yesness)}`} />
           </div>
           <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/[0.08]">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-[#20e6ff] to-[#8dffcc] transition-all duration-500"
-              style={{ width: `${Math.max(8, derived.yesness * 100)}%` }}
+              className="h-full rounded-full bg-[#8dffcc] transition-all duration-500"
+              style={{ width: `${Math.max(8, animatedYesness * 100)}%` }}
             />
           </div>
           <div className="mt-4 grid grid-cols-3 gap-2">
@@ -205,16 +299,25 @@ export function MobileObserver() {
           <div className="mt-4 grid gap-2">
             {pipeline.map((stage) => {
               const state = stageState(stage, derived.timeline);
+              const selected = selectedFlowKey === stage.key;
               return (
-                <div key={stage.key} className={`flex items-center gap-3 rounded-2xl border px-3 py-2.5 transition duration-500 ${stage.key === 'hook' && isHookFresh(derived.latestHook) ? 'evomate-hook-card border-[#8dffcc]/35 bg-[#8dffcc]/[0.09]' : 'border-white/[0.07] bg-white/[0.03]'}`}>
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-xl border ${state === 'active' ? 'border-[#8dffcc]/35 bg-[#8dffcc]/12 text-[#8dffcc]' : state === 'done' ? 'border-[#20e6ff]/24 bg-[#20e6ff]/10 text-[#20e6ff]' : 'border-white/10 bg-white/[0.03] text-white/30'} [&>svg]:h-3.5 [&>svg]:w-3.5`}>
-                    {stage.icon}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-white">{stage.title}</p>
-                    <p className="truncate text-xs text-white/35">{stage.detail}</p>
-                  </div>
-                  <span className="text-xs text-white/35">{state === 'active' ? 'now' : state === 'done' ? 'done' : 'wait'}</span>
+                <div key={stage.key} className={`overflow-hidden rounded-2xl border transition duration-500 ${selected ? 'border-white/[0.14] bg-white/[0.045]' : stage.key === 'hook' && isHookFresh(derived.latestHook) ? 'evomate-hook-card border-[#20e6ff]/30 bg-[#20e6ff]/[0.065]' : 'border-white/[0.07] bg-white/[0.03]'}`}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFlowKey(selected ? '' : stage.key)}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left"
+                    aria-expanded={selected}
+                  >
+                    <span className={`flex h-7 w-7 items-center justify-center rounded-xl border ${state === 'active' ? 'border-[#20e6ff]/32 bg-[#20e6ff]/10 text-[#20e6ff]' : state === 'done' ? 'border-white/10 bg-white/[0.035] text-white/45' : 'border-white/10 bg-white/[0.03] text-white/30'} [&>svg]:h-3.5 [&>svg]:w-3.5`}>
+                      {stage.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-white">{stage.title}</p>
+                      <p className="truncate text-xs text-white/35">{stage.detail}</p>
+                    </div>
+                    <span className={`text-xs ${selected ? 'text-white/58' : 'text-white/35'}`}>{selected ? 'open' : state === 'active' ? 'now' : state === 'done' ? 'done' : 'wait'}</span>
+                  </button>
+                  {selected && <FlowStageDetail stage={stage} derived={derived} state={state} />}
                 </div>
               );
             })}
@@ -225,7 +328,7 @@ export function MobileObserver() {
           <SectionHeader icon={<History />} title="Live Log" subtitle={`${derived.timeline.length} events`} />
           <div className="mt-4 space-y-2">
             {derived.timeline.length ? derived.timeline.slice(0, 6).map((item) => (
-              <div key={item.id} className={`rounded-2xl border p-3 transition duration-500 ${isHookEvent(item) ? 'border-[#8dffcc]/25 bg-[#8dffcc]/[0.055] shadow-[0_0_28px_rgba(141,255,204,0.08)]' : 'border-white/[0.06] bg-black/20'}`}>
+              <div key={item.id} className={`rounded-2xl border p-3 transition duration-500 ${isHookEvent(item) ? 'border-[#20e6ff]/22 bg-[#20e6ff]/[0.045] shadow-[0_0_28px_rgba(32,230,255,0.07)]' : 'border-white/[0.06] bg-black/20'}`}>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[10px] uppercase tracking-[0.16em] text-[#20e6ff]/60">{compactType(item.type)}</span>
                   <span className="text-[10px] text-white/32">{formatClock(item.createdAt)}</span>
@@ -253,14 +356,11 @@ export function MobileObserver() {
           </p>
         )}
 
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-white/[0.08] bg-[#03050a]/88 px-4 py-3 backdrop-blur-2xl">
-          <div className="mx-auto grid max-w-[480px] grid-cols-4 gap-2">
-            <MobileFeedbackButton label="有用" icon={<ThumbsUp />} onClick={() => model.feedback('accepted', '手机端反馈：这次很有用。')} busy={model.busy === 'feedback'} />
-            <MobileFeedbackButton label="没用" icon={<ThumbsDown />} onClick={() => model.feedback('corrected', '手机端反馈：这次没有命中我的意图。')} busy={model.busy === 'feedback'} />
-            <MobileFeedbackButton label="太保守" icon={<ShieldAlert />} onClick={() => model.feedback('interrupted', '手机端反馈：这次太保守，需要更快推进。')} busy={model.busy === 'feedback'} />
-            <MobileFeedbackButton label="训练" icon={<Play />} onClick={() => model.train('preference_train')} busy={model.busy === 'train'} />
-          </div>
-        </div>
+        <FeedbackLoopDock
+          expanded={feedbackExpanded}
+          onToggle={() => setFeedbackExpanded((value) => !value)}
+          model={model}
+        />
       </section>
     </main>
   );
@@ -269,6 +369,8 @@ export function MobileObserver() {
 function useEvoMateLive(): LiveModel {
   const [state, setState] = useState<EvolutionState | null>(null);
   const [history, setHistory] = useState<EvolutionHistory | null>(null);
+  const [memoryRoute, setMemoryRoute] = useState<MemoryRouteResponse | null>(null);
+  const [evolutionResult, setEvolutionResult] = useState<EvolutionResultResponse | null>(null);
   const [status, setStatus] = useState<LiveStatus>('connecting');
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
@@ -278,14 +380,18 @@ function useEvoMateLive(): LiveModel {
 
   const refresh = useCallback(async () => {
     try {
-      const [nextState, nextHistory] = await Promise.all([
+      const [nextState, nextHistory, nextMemoryRoute, nextEvolutionResult] = await Promise.all([
         fetchEvolutionState(),
-        fetchEvolutionHistory(24, true)
+        fetchEvolutionHistory(24, true),
+        fetchMemoryRoute().catch(() => null),
+        fetchEvolutionResult().catch(() => null)
       ]);
       const latest = nextState.timeline?.[0];
       const stamp = [nextState.generation, nextState.phase, latest?.id, latest?.createdAt, nextState.metrics?.yesnessScore].join(':');
       setState(nextState);
       setHistory(nextHistory);
+      setMemoryRoute(nextMemoryRoute);
+      setEvolutionResult(nextEvolutionResult);
       setStatus('live');
       setLastError(null);
       if (stamp !== stateStamp.current) {
@@ -311,12 +417,13 @@ function useEvoMateLive(): LiveModel {
     };
   }, [refresh]);
 
-  const feedback = useCallback(async (kind: FeedbackKind, text?: string, score?: number) => {
+  const feedback = useCallback(async (kind: FeedbackKind, text?: string, score?: number, signals?: string[]) => {
     const latestGene = state?.timeline?.find((item) => item.geneId)?.geneId;
     const latestSignals = state?.timeline?.find((item) => item.signals?.length)?.signals;
+    const mergedSignals = [...new Set([...(latestSignals ?? []), ...(signals ?? [])])];
     setBusy('feedback');
     try {
-      const result = await sendFeedback({ kind, text, score, geneId: latestGene, signals: latestSignals });
+      const result = await sendFeedback({ kind, text, score, geneId: latestGene, signals: mergedSignals });
       if (result.state) setState(result.state);
       await refresh();
     } catch (error) {
@@ -341,7 +448,7 @@ function useEvoMateLive(): LiveModel {
     }
   }, [refresh]);
 
-  return { state, history, status, lastError, lastUpdatedAt, refresh, feedback, train, busy, trainReceipt };
+  return { state, history, memoryRoute, evolutionResult, status, lastError, lastUpdatedAt, refresh, feedback, train, busy, trainReceipt };
 }
 
 function useDerivedState(state: EvolutionState | null, history: EvolutionHistory | null) {
@@ -369,9 +476,221 @@ function useDerivedState(state: EvolutionState | null, history: EvolutionHistory
       phase: state?.phase ?? 'strategy_decision',
       totalEvents: history?.totalTimeline ?? state?.timeline?.length ?? timeline.length,
       latestJobStatus: latestJob?.status,
-      embeddingStatus: jobs.some((job) => job.type === 'embedding_build' && job.status !== 'completed') ? 'building' : 'ready'
+      embeddingStatus: jobs.some((job) => job.type === 'embedding_build' && job.status !== 'completed') ? 'building' : 'ready',
+      nextStep: state?.nextStep
     };
   }, [history, state]);
+}
+
+function useAnimatedNumber(value: number) {
+  const [display, setDisplay] = useState(value);
+  const displayRef = useRef(value);
+
+  useEffect(() => {
+    const from = displayRef.current;
+    const delta = value - from;
+    if (Math.abs(delta) < 0.002) {
+      displayRef.current = value;
+      setDisplay(value);
+      return;
+    }
+
+    const duration = 680;
+    const start = window.performance.now();
+    let raf = 0;
+
+    const tick = (now: number) => {
+      const progress = clamp((now - start) / duration, 0, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = from + delta * eased;
+      displayRef.current = next;
+      setDisplay(next);
+      if (progress < 1) raf = window.requestAnimationFrame(tick);
+    };
+
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [value]);
+
+  return display;
+}
+
+function FlowStageDetail({
+  stage,
+  derived,
+  state
+}: {
+  stage: PipelineStage;
+  derived: ReturnType<typeof useDerivedState>;
+  state: 'idle' | 'done' | 'active';
+}) {
+  const event = stageEvent(stage, derived.timeline);
+  const detail = stageReadableDetail(stage.key, derived, event);
+
+  return (
+    <div className="evomate-flow-detail border-t border-white/[0.06] px-3 pb-3 pt-2">
+      <div className="evomate-detail-rise grid grid-cols-2 gap-2">
+        <FlowMiniStat label="State" value={state} tone={state === 'active' ? 'cyan' : 'muted'} />
+        <FlowMiniStat label="Updated" value={event ? timeAgo(event.createdAt) : 'no receipt'} />
+      </div>
+      <FlowStageMotion stage={stage} state={state} score={event?.score ?? derived.yesness} winner={derived.activeGene.name} />
+      <div className="evomate-detail-rise mt-2 rounded-2xl border border-white/[0.06] bg-black/20 p-3">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/28">{detail.label}</p>
+        <p className="mt-1 text-sm leading-6 text-white/66">{detail.primary}</p>
+        <p className="mt-2 text-xs leading-5 text-white/38">{detail.secondary}</p>
+      </div>
+      {event && (
+        <div className="evomate-detail-rise mt-2 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-[#20e6ff]/60">{compactType(event.type)}</span>
+            {typeof event.score === 'number' && <span className="text-[10px] text-white/38">{pct(event.score)}</span>}
+          </div>
+          <p className="mt-1 line-clamp-3 text-xs leading-5 text-white/48">{event.summary}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FlowStageMotion({
+  stage,
+  state,
+  score,
+  winner
+}: {
+  stage: PipelineStage;
+  state: 'idle' | 'done' | 'active';
+  score?: number;
+  winner?: string;
+}) {
+  const running = state === 'active';
+  const height = stage.key === 'vote' ? 'h-24' : 'h-16';
+  return (
+    <div className={`evomate-detail-rise mt-2 overflow-hidden rounded-2xl border border-white/[0.06] bg-black/18 p-3 ${state === 'idle' ? 'opacity-55' : ''}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-white/28">{stage.title} motion</span>
+        <span className={`text-[10px] ${running ? 'text-[#20e6ff]' : 'text-white/34'}`}>{running ? 'running' : state}</span>
+      </div>
+      <div className={`relative mt-3 ${height} overflow-hidden rounded-2xl border border-white/[0.055] bg-[#050810]/90`}>
+        <div className="absolute inset-x-5 top-1/2 h-px -translate-y-1/2 bg-white/[0.08]" />
+        <div className="absolute left-5 right-5 top-1/2 h-px -translate-y-1/2 overflow-hidden">
+          <span className="evomate-stage-packet absolute left-0 top-0 h-px w-1/3 bg-[#20e6ff]/80" />
+        </div>
+        <StageMotionVariant stageKey={stage.key} score={score} winner={winner} />
+      </div>
+    </div>
+  );
+}
+
+function StageMotionVariant({ stageKey, score, winner }: { stageKey: string; score?: number; winner?: string }) {
+  if (stageKey === 'semantic') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center gap-2">
+        {['intent', 'risk', 'tone'].map((label, index) => (
+          <span
+            key={label}
+            className="evomate-semantic-chip rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[10px] text-white/46"
+            style={{ animationDelay: `${index * 180}ms` }}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  if (stageKey === 'vote') {
+    return (
+      <div className="absolute inset-0 p-2">
+        <div className="grid grid-cols-4 gap-1">
+          {['bandit', 'reward', 'policy', 'memory'].map((voter, index) => (
+            <span
+              key={voter}
+              className="evomate-voter-chip truncate rounded-full border border-white/[0.07] bg-white/[0.035] px-2 py-1 text-center text-[9px] text-white/38"
+              style={{ animationDelay: `${index * 120}ms` }}
+            >
+              {voter}
+            </span>
+          ))}
+        </div>
+        <div className="absolute inset-x-3 top-[39px] flex items-center justify-between gap-2">
+          <span className="evomate-duel-card rounded-xl border border-white/[0.07] bg-white/[0.035] px-2.5 py-1.5 text-[10px] text-white/50">gene A</span>
+          <span className="evomate-duel-vs rounded-full border border-[#20e6ff]/18 bg-[#20e6ff]/[0.06] px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-[#20e6ff]/70">duel</span>
+          <span className="evomate-duel-card rounded-xl border border-white/[0.07] bg-white/[0.035] px-2.5 py-1.5 text-[10px] text-white/50">gene B</span>
+          <span className="evomate-duel-card hidden rounded-xl border border-white/[0.07] bg-white/[0.035] px-2.5 py-1.5 text-[10px] text-white/50 sm:inline">gene C</span>
+        </div>
+        <div className="absolute inset-x-3 bottom-2 flex items-center justify-between rounded-xl border border-[#8dffcc]/14 bg-[#8dffcc]/[0.055] px-3 py-1.5">
+          <span className="truncate text-[10px] text-[#d8ffe9]">winner · {winner || 'selected gene'}</span>
+          <span className="ml-2 shrink-0 text-[10px] text-[#8dffcc]/75">{pct(score)}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (stageKey === 'inject') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-between px-5">
+        <span className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[10px] text-white/46">advisor</span>
+        <span className="evomate-inject-beam h-px flex-1 bg-[#20e6ff]/60" />
+        <span className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[10px] text-white/46">codex</span>
+      </div>
+    );
+  }
+
+  if (stageKey === 'gep') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center gap-2 px-4">
+        {[
+          ['feedback', 'pending'],
+          ['outcome', 'pending'],
+          ['mutation', 'slot']
+        ].map(([label, status], index) => (
+          <div
+            key={label}
+            className="evomate-gep-card min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-white/[0.035] px-2.5 py-2"
+            style={{ animationDelay: `${index * 150}ms` }}
+          >
+            <p className="truncate text-[9px] uppercase tracking-[0.12em] text-white/30">{label}</p>
+            <p className="mt-1 truncate text-[10px] text-white/52">{status}</p>
+          </div>
+        ))}
+        <span className="evomate-gep-write absolute bottom-2 left-6 right-6 h-px bg-[#20e6ff]/45" />
+      </div>
+    );
+  }
+
+  if (stageKey === 'train') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center gap-2">
+        {[0, 1, 2, 3, 4].map((index) => (
+          <span
+            key={index}
+            className="evomate-train-bar w-2 rounded-full bg-[#8dffcc]/58"
+            style={{ animationDelay: `${index * 110}ms` }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <span className="evomate-hook-radar relative h-10 w-10 rounded-full border border-[#20e6ff]/28">
+        <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#20e6ff]/80" />
+      </span>
+      <span className="ml-5 text-[10px] uppercase tracking-[0.18em] text-white/32">capturing signal</span>
+    </div>
+  );
+}
+
+function FlowMiniStat({ label, value, tone = 'muted' }: { label: string; value: string; tone?: 'mint' | 'cyan' | 'muted' }) {
+  const color = tone === 'mint' ? 'text-[#8dffcc]' : tone === 'cyan' ? 'text-[#20e6ff]' : 'text-white/62';
+  return (
+    <div className="min-w-0 rounded-xl border border-white/[0.06] bg-black/18 px-3 py-2">
+      <p className="text-[9px] uppercase tracking-[0.16em] text-white/26">{label}</p>
+      <p className={`mt-0.5 truncate text-xs font-medium ${color}`}>{value}</p>
+    </div>
+  );
 }
 
 function HookImpactFx({ event }: { event?: EvolutionTimelineItem }) {
@@ -381,7 +700,7 @@ function HookImpactFx({ event }: { event?: EvolutionTimelineItem }) {
   const triggerImpact = useCallback((nextImpact: EvolutionTimelineItem) => {
     if (clearTimer.current) window.clearTimeout(clearTimer.current);
     setImpact(nextImpact);
-    clearTimer.current = window.setTimeout(() => setImpact(null), 8000);
+    clearTimer.current = window.setTimeout(() => setImpact(null), 4200);
   }, []);
 
   useEffect(() => {
@@ -410,32 +729,22 @@ function HookImpactFx({ event }: { event?: EvolutionTimelineItem }) {
   }, [triggerImpact]);
 
   if (!impact) return null;
+  const local = isLocalActivityEvent(impact);
 
   return (
     <div key={impact.id} className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
-      <div className="absolute inset-0 evomate-hook-screen-flash" />
-      <div className="absolute left-1/2 top-[42%] h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#8dffcc]/60 evomate-hook-shockwave" />
-      <div className="absolute left-1/2 top-[42%] h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#20e6ff]/45 evomate-hook-shockwave-delayed" />
-      {Array.from({ length: 14 }).map((_, index) => (
-        <span
-          key={index}
-          className="absolute left-1/2 top-[42%] h-1.5 w-1.5 rounded-full bg-[#8dffcc] shadow-[0_0_18px_rgba(141,255,204,0.9)] evomate-hook-particle"
-          style={{
-            '--evomate-angle': `${index * 25.7}deg`,
-            '--evomate-distance': `${88 + (index % 5) * 22}px`,
-            animationDelay: `${index * 22}ms`
-          } as CSSProperties}
-        />
-      ))}
-      <div className="absolute inset-x-4 top-6 mx-auto max-w-[480px] rounded-[26px] border border-[#8dffcc]/35 bg-[#06130f]/85 p-4 shadow-[0_24px_120px_rgba(32,230,255,0.18)] backdrop-blur-2xl evomate-hook-toast">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#8dffcc]/30 bg-[#8dffcc]/12 text-[#8dffcc]">
-            <RadioTower className="h-5 w-5" />
+      <div className={`absolute inset-0 ${local ? 'evomate-local-screen-flash' : 'evomate-hook-screen-flash'}`} />
+      <div className="evomate-hook-edge-pulse absolute right-0 top-20 h-44 w-px bg-[#20e6ff]/65 shadow-[0_0_34px_rgba(32,230,255,0.6)]" />
+      <div className="absolute inset-x-4 top-4 mx-auto w-[min(360px,calc(100vw-28px))] overflow-hidden rounded-[22px] border border-[#20e6ff]/34 bg-[#06101a]/90 p-3 shadow-[0_20px_80px_rgba(32,230,255,0.18)] backdrop-blur-xl evomate-hook-toast">
+        <div className="absolute inset-x-0 top-0 h-px bg-[#20e6ff]/65 evomate-hook-toast-progress" />
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-[#20e6ff]/24 bg-[#20e6ff]/10 text-[#20e6ff]">
+            <RadioTower className="h-4 w-4" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[#8dffcc]/75">hook captured</p>
-            <p className="mt-1 truncate text-sm font-semibold text-white">{hookTitle(impact)}</p>
-            <p className="mt-1 truncate text-xs text-white/45">{impact.summary}</p>
+            <p className="text-[9px] uppercase tracking-[0.2em] text-[#20e6ff]/78">hook captured</p>
+            <p className="mt-0.5 truncate text-[13px] font-semibold text-white">{hookTitle(impact)}</p>
+            <p className="mt-0.5 truncate text-[11px] text-white/52">{impact.summary}</p>
           </div>
         </div>
       </div>
@@ -456,29 +765,25 @@ function HookSourceCard({
   const fresh = isHookFresh(event);
 
   return (
-    <section className={`mt-4 overflow-hidden rounded-[28px] border p-4 transition duration-500 ${fresh ? 'evomate-hook-card border-[#8dffcc]/40 bg-[#8dffcc]/[0.075]' : 'border-[#20e6ff]/14 bg-[#07131d]/82'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[20px] border ${fresh ? 'border-[#8dffcc]/32 bg-[#8dffcc]/12 text-[#8dffcc]' : 'border-[#20e6ff]/22 bg-[#20e6ff]/10 text-[#20e6ff]'}`}>
+    <section className={`mt-4 overflow-hidden rounded-[28px] border p-4 transition duration-500 ${fresh ? 'evomate-hook-card border-white/[0.14] bg-white/[0.045]' : 'border-white/[0.08] bg-[#070b12]/88'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[18px] border border-[#20e6ff]/24 bg-[#20e6ff]/[0.08] text-[#20e6ff]">
             <RadioTower className="h-5 w-5" />
           </span>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.22em] text-[#20e6ff]/70">active source</span>
-              <span className="rounded-full border border-white/[0.08] bg-white/[0.045] px-2.5 py-1 text-[10px] text-white/38">{display.channel}</span>
-            </div>
-            <h1 className="mt-2 truncate text-[28px] font-semibold leading-none tracking-[-0.075em] text-white">
+            <h1 className="truncate text-[28px] font-semibold leading-none tracking-[-0.075em] text-white">
               {display.title}
             </h1>
-            <p className="mt-2 truncate text-sm text-white/42">{display.subtitle}</p>
+            <p className="mt-1 truncate text-xs text-white/38">{display.compactMeta}</p>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full border border-[#8dffcc]/20 bg-[#8dffcc]/10 px-3 py-1.5 text-xs text-[#8dffcc]">{apiLabel()}</span>
+          <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-xs text-white/58">Cloud</span>
           <button
             onClick={onRefresh}
-            className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-white/45 transition hover:border-[#20e6ff]/30 hover:text-[#20e6ff]"
+            className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.035] text-white/38 transition hover:border-[#20e6ff]/30 hover:text-[#20e6ff]"
             aria-label="refresh"
           >
             <RefreshCcw className="h-4 w-4" />
@@ -486,25 +791,389 @@ function HookSourceCard({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-white/[0.07] bg-black/20 p-3">
-        <p className="text-[10px] uppercase tracking-[0.18em] text-white/28">{display.kindLabel}</p>
-        <p className="mt-1 line-clamp-2 text-sm leading-6 text-white/62">{display.preview}</p>
+      <div className="mt-3 rounded-2xl border border-white/[0.055] bg-black/15 px-3 py-2">
+        <p className="line-clamp-1 text-xs leading-5 text-white/42">{display.preview}</p>
       </div>
     </section>
   );
 }
 
+
+function EvolutionGraphEntry({
+  event,
+  yesness,
+  activeGeneName
+}: {
+  event?: EvolutionTimelineItem;
+  yesness: number;
+  activeGeneName: string;
+}) {
+  const point = event ? compactType(event.type) : 'waiting point';
+  return (
+    <a
+      href="/graph"
+      className="group mt-4 block overflow-hidden rounded-[28px] border border-[#8dffcc]/14 bg-[#8dffcc]/[0.045] p-4 shadow-[0_26px_90px_rgba(32,230,255,0.08)] transition duration-300 hover:border-[#8dffcc]/28 hover:bg-[#8dffcc]/[0.07]"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-[20px] border border-[#8dffcc]/22 bg-[#8dffcc]/10 text-[#8dffcc]">
+            <Network className="h-5 w-5" />
+            <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-[#20e6ff] shadow-[0_0_18px_rgba(32,230,255,0.8)]" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold tracking-[-0.04em] text-white">打开进化树镜头</p>
+            <p className="mt-1 truncate text-xs text-white/42">当前点：{point} · {activeGeneName}</p>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-semibold tracking-[-0.08em] text-white">{pct(yesness)}</p>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[#8dffcc]/58">open graph</p>
+        </div>
+      </div>
+      <div className="mt-4 flex items-center gap-2">
+        {['Hook', 'Signal', 'Gene', 'GEP', 'Next'].map((label, index) => (
+          <span key={label} className="flex min-w-0 flex-1 items-center gap-2">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-[#8dffcc]/70 shadow-[0_0_16px_rgba(141,255,204,0.45)] transition group-hover:bg-[#20e6ff]"
+              style={{ opacity: 0.36 + index * 0.12 }}
+            />
+            <span className="truncate text-[10px] text-white/30">{label}</span>
+          </span>
+        ))}
+      </div>
+    </a>
+  );
+}
+
+function MemoryMoEPanel({
+  derived,
+  memoryRoute
+}: {
+  derived: ReturnType<typeof useDerivedState>;
+  memoryRoute: MemoryRouteResponse | null;
+}) {
+  const gepEvents = derived.timeline.filter((item) => /gep_assets_written|remote_job_imported/i.test(item.type)).length;
+  const validationEvents = derived.timeline.filter((item) => /validation|command|tool_result|policy_reward|feedback|outcome/i.test(`${item.type} ${item.summary}`)).length;
+  const hookEvents = derived.timeline.filter(isHookEvent).length;
+  const activeExpert = memoryRoute?.activeExpert ?? pickActiveMemoryExpert(derived.latest);
+  const fallbackExperts = [
+    {
+      label: 'Episodic',
+      value: `${hookEvents || derived.totalEvents} turns`,
+      detail: '最近会话、工具结果、用户纠正',
+      tone: 'cyan'
+    },
+    {
+      label: 'Procedural',
+      value: gepEvents ? `${gepEvents} capsules` : 'recipe ready',
+      detail: '项目流程：先查架构 / 再改 / 跑检查',
+      tone: 'mint'
+    },
+    {
+      label: 'Validation',
+      value: validationEvents ? `${validationEvents} proofs` : 'needs proof',
+      detail: '命令成败、测试结果、可复用约束',
+      tone: validationEvents ? 'mint' : 'amber'
+    },
+    {
+      label: 'Router',
+      value: activeExpert,
+      detail: '工程 MoE：按信号选记忆专家',
+      tone: 'cyan'
+    }
+  ];
+  const routedExperts = memoryRoute?.experts?.length
+    ? memoryRoute.experts.slice(0, 4).map((expert) => ({
+      label: expert.label,
+      value: expert.status === 'active' ? `${pct(expert.score)} active` : pct(expert.score),
+      detail: expert.evidence || expert.role,
+      tone: expert.status === 'active' ? 'mint' : expert.status === 'ready' ? 'cyan' : 'amber',
+      route: expert
+    }))
+    : fallbackExperts;
+  const topMemory = memoryRoute?.recalledMemories?.[0];
+  const gepProof = memoryRoute?.gepProof;
+  const routePlan = memoryRoute?.routePlan?.slice(0, 4) ?? [
+    `retrieve:${activeExpert}`,
+    'route:latest signals',
+    `execute:${derived.activeGene.id}`,
+    'solidify:GEP feedback'
+  ];
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-[28px] border border-[#20e6ff]/14 bg-[#07121a]/88 p-4 shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
+      <SectionHeader icon={<BrainCircuit />} title="Memory Engineering MoE" subtitle="not just prompt injection" />
+      <div className="mt-3 rounded-2xl border border-white/[0.06] bg-black/20 p-3">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-[#20e6ff]/62">engineering layer</p>
+        <p className="mt-1 text-sm font-medium leading-6 text-white">
+          进化不只是在提示词前面塞一句话；它应该把经验拆成记忆专家，再由 Router 决定本轮调用哪类工程记忆。
+        </p>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        {routedExperts.map((expert) => (
+          <div key={expert.label} className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
+            <p className="text-[9px] uppercase tracking-[0.16em] text-white/25">{expert.label}</p>
+            <p className={`mt-1 truncate text-sm font-semibold ${memoryToneClass(expert.tone)}`}>{expert.value}</p>
+            <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/42">{expert.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        <div className="rounded-2xl border border-[#8dffcc]/12 bg-[#8dffcc]/[0.045] p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[9px] uppercase tracking-[0.16em] text-[#8dffcc]/62">retrieved memory</p>
+            <p className="shrink-0 text-[9px] uppercase tracking-[0.14em] text-white/30">{memoryRoute ? 'real route' : 'local fallback'}</p>
+          </div>
+          <p className="mt-1 line-clamp-1 text-xs font-semibold text-white">{topMemory?.title ?? `${activeExpert} expert selected`}</p>
+          <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/46">{topMemory?.body ?? '等待 /api/memory/route 返回可召回的工程记忆。'}</p>
+        </div>
+        {gepProof && (
+          <div className="grid grid-cols-3 gap-2">
+            <MobileStat label="GEP Genes" value={`${gepProof.genes}`} />
+            <MobileStat label="Capsules" value={`${gepProof.capsules}`} />
+            <MobileStat label="Events" value={`${gepProof.events}`} />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 grid grid-cols-4 gap-1.5">
+        {routePlan.map((step, index) => (
+          <div key={`${step}:${index}`} className="min-w-0">
+            <div className={`h-1.5 rounded-full ${index <= 1 ? 'bg-[#20e6ff]' : index === 2 ? 'bg-[#8dffcc]/75' : 'bg-white/[0.1]'}`} />
+            <p className="mt-1 truncate text-[9px] uppercase tracking-[0.08em] text-white/34">{step}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EvolutionResultPanel({
+  derived,
+  memoryRoute,
+  evolutionResult
+}: {
+  derived: ReturnType<typeof useDerivedState>;
+  memoryRoute: MemoryRouteResponse | null;
+  evolutionResult: EvolutionResultResponse | null;
+}) {
+  const result = evolutionResult ? buildEvolutionResultFromApi(evolutionResult) : buildEvolutionResult(derived, memoryRoute);
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-[28px] border border-[#8dffcc]/14 bg-[#07110f]/88 p-4 shadow-[0_26px_88px_rgba(141,255,204,0.08)]">
+      <div className="flex items-start justify-between gap-3">
+        <SectionHeader icon={<Zap />} title="Evolution Result" subtitle="before → feedback → mutation → after" />
+        <span className="rounded-full border border-[#8dffcc]/14 bg-[#8dffcc]/[0.055] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#8dffcc]/68">
+          {result.mode}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-stretch gap-2">
+        <BehaviorResultCard
+          label="Before"
+          title={result.beforeTitle}
+          body={result.beforeBody}
+          score={result.beforeScore}
+          tone="before"
+        />
+        <div className="flex flex-col items-center justify-center">
+          <span className="h-full w-px bg-gradient-to-b from-transparent via-white/[0.16] to-transparent" />
+          <span className="my-2 rounded-full border border-[#20e6ff]/18 bg-[#20e6ff]/[0.08] px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-[#20e6ff]/72">evolve</span>
+          <span className="h-full w-px bg-gradient-to-b from-transparent via-white/[0.16] to-transparent" />
+        </div>
+        <BehaviorResultCard
+          label="After"
+          title={result.afterTitle}
+          body={result.afterBody}
+          score={result.afterScore}
+          tone="after"
+        />
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/[0.06] bg-black/18 p-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-[#ffd166]/18 bg-[#ffd166]/[0.07] text-[#ffd166]">
+            <RefreshCcw className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[9px] uppercase tracking-[0.18em] text-[#ffd166]/65">user feedback</p>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/62">{result.feedback}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2 grid gap-2">
+        <div className="rounded-2xl border border-[#20e6ff]/12 bg-[#20e6ff]/[0.045] p-3">
+          <p className="text-[9px] uppercase tracking-[0.18em] text-[#20e6ff]/62">mutation / next advisor</p>
+          <p className="mt-1 text-sm font-medium leading-6 text-white">{result.mutation}</p>
+          <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-white/42">{result.nextAdvisor}</p>
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {result.proofs.map((proof) => (
+            <div key={proof.label} className="min-w-0 rounded-xl border border-white/[0.06] bg-white/[0.03] px-2 py-2">
+              <p className="truncate text-[8px] uppercase tracking-[0.12em] text-white/24">{proof.label}</p>
+              <p className={`mt-1 truncate text-[11px] font-semibold ${proof.ok ? 'text-[#8dffcc]' : 'text-white/38'}`}>{proof.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BehaviorResultCard({
+  label,
+  title,
+  body,
+  score,
+  tone
+}: {
+  label: string;
+  title: string;
+  body: string;
+  score: number;
+  tone: 'before' | 'after';
+}) {
+  const isAfter = tone === 'after';
+  return (
+    <div className={`min-w-0 rounded-2xl border p-3 ${isAfter ? 'border-[#8dffcc]/16 bg-[#8dffcc]/[0.05]' : 'border-white/[0.07] bg-black/22'}`}>
+      <div className="flex items-center justify-between gap-2">
+        <p className={`text-[9px] uppercase tracking-[0.18em] ${isAfter ? 'text-[#8dffcc]/64' : 'text-white/28'}`}>{label}</p>
+        <p className={`text-xs font-semibold ${isAfter ? 'text-[#8dffcc]' : 'text-white/46'}`}>{pct(score)}</p>
+      </div>
+      <p className="mt-2 truncate text-sm font-semibold tracking-[-0.04em] text-white">{title}</p>
+      <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-white/46">{body}</p>
+    </div>
+  );
+}
+
+function buildEvolutionResultFromApi(response: EvolutionResultResponse) {
+  return {
+    mode: response.usedClaude ? 'claude' : response.mode === 'live_proof' ? 'live proof' : 'fallback',
+    beforeTitle: response.before.title,
+    beforeBody: response.before.body,
+    beforeScore: response.before.score,
+    feedback: response.feedback.text,
+    mutation: response.mutation.text,
+    afterTitle: response.after.title,
+    afterBody: response.after.body,
+    afterScore: response.after.score,
+    nextAdvisor: response.nextAdvisor,
+    proofs: response.proof
+  };
+}
+
+function buildEvolutionResult(
+  derived: ReturnType<typeof useDerivedState>,
+  memoryRoute: MemoryRouteResponse | null
+) {
+  const text = derived.timeline.map((item) => `${item.type} ${item.summary} ${(item.signals || []).join(' ')}`).join(' ').toLowerCase();
+  const feedbackEvent = derived.timeline.find((item) => /feedback|policy_reward|outcome|corrected|interrupted|undo|手机端反馈/i.test(`${item.type} ${item.summary}`));
+  const mutationEvent = derived.timeline.find((item) => /gep_assets_written|mutation|capsule|evolutionevent|remote_job_imported/i.test(`${item.type} ${item.summary}`));
+  const visible = derived.nextStep?.visibleEvolution;
+  const gep = memoryRoute?.gepProof;
+  const prefersConcise = /too_verbose|prefer_concise|啰嗦|更短|直接/.test(text);
+  const prefersFast = /too_slow|prefer_fast|更快/.test(text);
+  const prefersSafe = /too_risky|ask_before|冒进|先确认/.test(text);
+  const prefersDeep = /too_shallow|deeper|深入|太浅/.test(text);
+
+  const behavior = prefersSafe
+    ? {
+      beforeTitle: 'Over-Active Yes',
+      beforeBody: '推进太快，容易在高风险修改前跳过确认。',
+      afterTitle: 'Safe Yes',
+      afterBody: '遇到大改动、权限或不可逆操作时先确认，再执行。'
+    }
+    : prefersDeep
+      ? {
+        beforeTitle: 'Shallow Yes',
+        beforeBody: '只给表层方案，缺少证据、推理和可落地拆解。',
+        afterTitle: 'Research Yes',
+        afterBody: '先补证据和推理，再给可执行路径。'
+      }
+      : prefersFast || prefersConcise
+        ? {
+          beforeTitle: 'Architect Yes',
+          beforeBody: '先解释架构和方案，行动偏慢，文字密度偏高。',
+          afterTitle: 'Fast Yes',
+          afterBody: '少解释，先执行；完成后只汇报关键改动和验证结果。'
+        }
+        : {
+          beforeTitle: 'Generic Yes',
+          beforeBody: '按通用助手习惯回答，还没有完全贴合这个用户的工作方式。',
+          afterTitle: derived.activeGene.name,
+          afterBody: derived.activeGene.action
+        };
+
+  const beforeScore = clamp(
+    typeof feedbackEvent?.score === 'number' && feedbackEvent.score < 0.62
+      ? feedbackEvent.score
+      : derived.nextStep?.confidence
+        ? derived.nextStep.confidence - 0.22
+        : derived.yesness - 0.2,
+    0.18,
+    0.74
+  );
+  const afterScore = clamp(Math.max(derived.yesness, beforeScore + 0.18), beforeScore + 0.08, 0.96);
+  const mutation = derived.nextStep?.mutation
+    || derived.nextStep?.gepAsset?.mutation
+    || (prefersSafe
+      ? 'Mutation: high-risk execution must ask first for this user.'
+      : prefersDeep
+        ? 'Mutation: shallow answers are penalized; use deeper reasoning before action.'
+        : prefersFast || prefersConcise
+          ? 'Mutation: coding/product tasks should prefer direct execution and concise reporting.'
+          : `Mutation: strengthen ${derived.activeGene.name} when similar signals reappear.`);
+  const feedback = feedbackEvent?.summary
+    || visible?.proof
+    || (prefersConcise
+      ? '用户反馈：太啰嗦，下一次需要更短、更直接。'
+      : prefersFast
+        ? '用户反馈：推进太慢，下一次减少解释、更快执行。'
+        : '等待用户用反馈按钮给这次行为打分。');
+  const nextAdvisor = derived.nextStep?.nextStep
+    || visible?.after
+    || (prefersSafe
+      ? 'Next Advisor: before destructive or high-risk work, ask one concise confirmation.'
+      : prefersDeep
+        ? 'Next Advisor: include evidence, tradeoffs, and a concrete next action.'
+        : prefersFast || prefersConcise
+          ? 'Next Advisor: for code/UI tasks, execute first; final reply only summarize changed files and checks.'
+          : `Next Advisor: reuse ${derived.activeGene.name} unless feedback suggests a stronger gene.`);
+
+  return {
+    mode: mutationEvent || derived.nextStep?.gepAsset ? 'live proof' : 'ready',
+    beforeTitle: visible?.before ? 'Before' : behavior.beforeTitle,
+    beforeBody: visible?.before ?? behavior.beforeBody,
+    beforeScore,
+    feedback,
+    mutation,
+    afterTitle: visible?.after ? 'After' : behavior.afterTitle,
+    afterBody: visible?.after ?? behavior.afterBody,
+    afterScore,
+    nextAdvisor,
+    proofs: [
+      { label: 'Gene', value: derived.activeGene.name, ok: Boolean(derived.activeGene.id) },
+      { label: 'Mutation', value: mutationEvent || derived.nextStep?.mutation ? 'written' : 'pending', ok: Boolean(mutationEvent || derived.nextStep?.mutation) },
+      { label: 'Capsule', value: gep ? `${gep.capsules}` : (memoryRoute ? 'routed' : 'ready'), ok: Boolean((gep?.capsules ?? 0) > 0 || memoryRoute) },
+      { label: 'Event', value: gep ? `${gep.events}` : `${derived.totalEvents}`, ok: derived.totalEvents > 0 }
+    ]
+  };
+}
+
 function HookBeacon({ event, status }: { event?: EvolutionTimelineItem; status: LiveStatus }) {
   const fresh = isHookFresh(event);
   return (
-    <section className={`mt-4 overflow-hidden rounded-[26px] border p-4 transition duration-500 ${fresh ? 'evomate-hook-card border-[#8dffcc]/35 bg-[#8dffcc]/[0.075]' : 'border-white/[0.08] bg-[#070b12]/88'}`}>
+    <section className={`mt-4 overflow-hidden rounded-[26px] border p-4 transition duration-500 ${fresh ? 'evomate-hook-card border-white/[0.12] bg-white/[0.045]' : 'border-white/[0.08] bg-[#070b12]/88'}`}>
       <div className="flex items-center justify-between gap-3">
         <SectionHeader
           icon={<RadioTower />}
           title={fresh ? 'Hook Just Landed' : 'Web Hook Armed'}
           subtitle={event ? `${hookTitle(event)} · ${timeAgo(event.createdAt)}` : `waiting · ${status}`}
         />
-        <span className={`h-3 w-3 rounded-full ${fresh ? 'animate-ping bg-[#8dffcc]' : status === 'live' ? 'bg-[#20e6ff]' : 'bg-white/20'}`} />
+        <span className={`h-3 w-3 rounded-full ${fresh ? 'animate-ping bg-[#20e6ff]' : event ? 'bg-[#20e6ff]' : status === 'live' ? 'bg-white/28' : 'bg-white/18'}`} />
       </div>
       <div className="mt-4 grid grid-cols-3 gap-2">
         <MobileStat label="Source" value={event ? hookSource(event) : 'browser'} />
@@ -518,7 +1187,7 @@ function HookBeacon({ event, status }: { event?: EvolutionTimelineItem; status: 
 function SectionHeader({ icon, title, subtitle }: { icon: ReactNode; title: string; subtitle: string }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#20e6ff]/18 bg-[#20e6ff]/[0.07] text-[#20e6ff] [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-white/58 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
       <div className="min-w-0">
         <h2 className="truncate text-base font-semibold tracking-[-0.04em] text-white">{title}</h2>
         <p className="truncate text-xs text-white/35">{subtitle}</p>
@@ -536,6 +1205,102 @@ function LiveBadge({ status }: { status: LiveStatus }) {
   );
 }
 
+function FeedbackLoopDock({
+  expanded,
+  onToggle,
+  model
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  model: LiveModel;
+}) {
+  const quickPresets = feedbackPresets.slice(0, 3);
+  const visiblePresets = expanded ? feedbackPresets : quickPresets;
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-20 border-t border-white/[0.06] bg-[#03050a]/94 px-4 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-2 backdrop-blur-2xl">
+      <div className="mx-auto max-w-[480px]">
+        <div className="mb-2 flex items-center justify-between gap-3 px-1">
+          <button type="button" onClick={onToggle} className="min-w-0 text-left">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[#8dffcc]/62">feedback loop</p>
+            <p className="truncate text-[11px] text-white/34">
+              {expanded ? '7维反馈 → reward/signals → GEP' : '点开记录速度/深度/风险/风格'}
+            </p>
+          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2.5 py-1 text-[10px] text-white/34">
+              {model.busy ? 'syncing' : `${feedbackPresets.length} dims`}
+            </span>
+            <button type="button" onClick={onToggle} className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-[10px] text-white/52">
+              {expanded ? '收起' : '更多'}
+            </button>
+          </div>
+        </div>
+
+        <div className={`grid gap-2 ${expanded ? 'grid-cols-2' : 'grid-cols-4'}`}>
+          {visiblePresets.map((preset) => (
+            <FeedbackPresetButton
+              key={preset.id}
+              preset={preset}
+              compact={!expanded}
+              busy={model.busy === 'feedback'}
+              onClick={() => model.feedback(preset.kind, preset.text, preset.score, preset.signals)}
+            />
+          ))}
+          <button
+            onClick={() => model.train('preference_train')}
+            disabled={model.busy === 'train'}
+            className={`rounded-2xl border border-white/[0.1] bg-white/[0.055] px-3 py-2.5 text-left text-white/62 transition hover:border-white/[0.18] disabled:opacity-45 ${expanded ? 'col-span-2' : ''}`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 text-xs font-medium">
+                {model.busy === 'train' ? <RefreshCcw className="h-3.5 w-3.5 animate-spin text-[#8dffcc]" /> : <Play className="h-3.5 w-3.5" />}
+                训练
+              </span>
+              {expanded && <span className="text-[10px] text-white/32">把反馈批量重放成策略</span>}
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FeedbackPresetButton({
+  preset,
+  compact,
+  busy,
+  onClick
+}: {
+  preset: FeedbackPreset;
+  compact: boolean;
+  busy?: boolean;
+  onClick: () => void;
+}) {
+  const toneClass = preset.tone === 'positive'
+    ? 'border-[#8dffcc]/18 bg-[#8dffcc]/[0.055] text-[#d8ffe9] hover:border-[#8dffcc]/30'
+    : preset.tone === 'negative'
+      ? 'border-[#ff8b8b]/14 bg-[#ff8b8b]/[0.04] text-[#ffd1d1] hover:border-[#ff8b8b]/26'
+      : preset.tone === 'caution'
+        ? 'border-[#ffd36e]/14 bg-[#ffd36e]/[0.045] text-[#ffe3a3] hover:border-[#ffd36e]/26'
+        : 'border-white/[0.075] bg-white/[0.035] text-white/58 hover:border-white/[0.14]';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className={`rounded-2xl border px-3 py-2 text-left transition disabled:opacity-45 ${toneClass}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-xs font-medium">{preset.label}</span>
+        {!compact && <span className="text-[10px] text-white/28">{Math.round(preset.score * 100)}</span>}
+      </div>
+      {!compact && <p className="mt-1 truncate text-[10px] text-white/34">{preset.caption}</p>}
+    </button>
+  );
+}
+
 function MobileStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-2xl border border-white/[0.06] bg-black/20 p-3">
@@ -545,24 +1310,21 @@ function MobileStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MobileFeedbackButton({ label, icon, busy, onClick }: { label: string; icon: ReactNode; busy?: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} disabled={busy} className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-2 py-2.5 text-[11px] text-white/58 disabled:opacity-45 [&>svg]:h-4 [&>svg]:w-4">
-      {busy ? <RefreshCcw className="animate-spin text-[#20e6ff]" /> : icon}
-      {label}
-    </button>
-  );
-}
-
 function PulseOrb({ yesness, status, eventKey }: { yesness: number; status: LiveStatus; eventKey?: string }) {
   return (
-    <div key={eventKey} className="relative h-20 w-20 shrink-0">
-      <div className={`absolute inset-0 rounded-full border ${status === 'offline' ? 'border-[#ff8b8b]/25' : 'border-[#20e6ff]/35'} evomate-pulse-ring`} />
-      <div className="absolute inset-[12%] rounded-full border border-[#8dffcc]/20 bg-[#8dffcc]/[0.04]" />
-      <div className="absolute inset-[22%] rounded-full bg-gradient-to-br from-[#20e6ff]/22 to-[#8dffcc]/12 shadow-[0_0_60px_rgba(32,230,255,0.22)]" />
+    <div
+      key={eventKey}
+      className="relative h-16 w-16 shrink-0"
+      style={{ '--evomate-yes-angle': `${Math.round(clamp(yesness, 0, 1) * 360)}deg` } as CSSProperties}
+    >
+      <div className="absolute inset-[-4px] rounded-full evomate-pulse-impact" />
+      <div className={`absolute inset-0 rounded-full border ${status === 'offline' ? 'border-[#ff8b8b]/22' : 'border-[#8dffcc]/30'} evomate-pulse-ring`} />
+      <div className="absolute inset-[11%] rounded-full border border-[#8dffcc]/12 bg-[#8dffcc]/[0.025]" />
+      <div className="absolute inset-[25%] rounded-full bg-[#8dffcc]/[0.035]" />
+      <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full bg-[#8dffcc]/90 shadow-[0_0_10px_rgba(141,255,204,0.5)] evomate-pulse-dot" />
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-xl font-semibold tracking-[-0.06em]">{pct(yesness)}</span>
-        <span className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/38">yes</span>
+        <span className="text-base font-semibold tracking-[-0.06em] text-[#d8ffe9]">{pct(yesness)}</span>
+        <span className="mt-0.5 text-[9px] uppercase tracking-[0.16em] text-[#8dffcc]/58">yes</span>
       </div>
     </div>
   );
@@ -571,9 +1333,9 @@ function PulseOrb({ yesness, status, eventKey }: { yesness: number; status: Live
 function ConsoleBackground() {
   return (
     <div className="pointer-events-none fixed inset-0 z-0">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(32,230,255,0.16),transparent_32%),radial-gradient(circle_at_92%_8%,rgba(141,255,204,0.12),transparent_30%),linear-gradient(180deg,#03050a_0%,#05070d_55%,#020307_100%)]" />
-      <div className="grid-bg absolute inset-0 opacity-[0.18]" />
-      <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-[#20e6ff]/60 to-transparent" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(76,96,132,0.18),transparent_34%),radial-gradient(circle_at_92%_8%,rgba(64,80,112,0.12),transparent_30%),linear-gradient(180deg,#03050a_0%,#05070d_55%,#020307_100%)]" />
+      <div className="grid-bg absolute inset-0 opacity-[0.12]" />
+      <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
     </div>
   );
 }
@@ -583,6 +1345,61 @@ function stageState(stage: PipelineStage, timeline: EvolutionTimelineItem[]): 'i
   const latestType = timeline[0]?.type;
   if (latestType && stage.types.includes(latestType)) return 'active';
   return timeline.some((item) => stage.types.includes(item.type)) ? 'done' : 'idle';
+}
+
+function stageEvent(stage: PipelineStage, timeline: EvolutionTimelineItem[]) {
+  return timeline.find((item) => stage.types.includes(item.type));
+}
+
+function stageReadableDetail(
+  key: string,
+  derived: ReturnType<typeof useDerivedState>,
+  event?: EvolutionTimelineItem
+) {
+  switch (key) {
+    case 'hook':
+      return {
+        label: 'captured input',
+        primary: event ? hookExcerpt(event) : '等待 Codex / Browser / Mobile hook。',
+        secondary: event ? `来源：${hookSource(event)}；事件：${hookKind(event)}。` : '收到用户/工具事件后，会作为本轮进化的起点。'
+      };
+    case 'semantic':
+      return {
+        label: 'semantic parse',
+        primary: event ? event.summary : '等待解析 task / intent / risk / permission。',
+        secondary: '把自然语言转成稳定字段，避免每次 JSON 语义输出漂移。'
+      };
+    case 'vote':
+      return {
+        label: 'gene election',
+        primary: event ? event.summary : `当前候选：${derived.activeGene.name}`,
+        secondary: 'Condorcet / Tournament 两两对决，综合 bandit、reward、policy、memory 票。'
+      };
+    case 'inject':
+      return {
+        label: 'advisor injection',
+        primary: event ? event.summary : derived.activeGene.action,
+        secondary: `选中行为：${derived.activeGene.name}。这层只注入建议，不阻塞 Codex 原流程。`
+      };
+    case 'gep':
+      return {
+        label: 'evolution memory',
+        primary: event ? event.summary : '等待用户反馈/outcome 写入 GEP 资产。',
+        secondary: '反馈会沉淀成 EvolutionEvent / Mutation，后续训练继续利用。'
+      };
+    case 'train':
+      return {
+        label: 'training loop',
+        primary: event ? event.summary : (derived.latestJobStatus ? `最新训练任务：${derived.latestJobStatus}` : '等待 /train 或反馈触发训练。'),
+        secondary: `Memory index: ${derived.embeddingStatus}; Policy: ${derived.latestJobStatus || 'ready'}。`
+      };
+    default:
+      return {
+        label: 'detail',
+        primary: event?.summary || '暂无回执。',
+        secondary: '等待下一次状态更新。'
+      };
+  }
 }
 
 function isHookEvent(event?: EvolutionTimelineItem): event is EvolutionTimelineItem {
@@ -596,6 +1413,26 @@ function isHookFresh(event?: EvolutionTimelineItem, windowMs = 30000) {
   return Date.now() - time < windowMs;
 }
 
+function isLocalActivityEvent(event?: EvolutionTimelineItem) {
+  const text = `${event?.summary || ''} ${(event?.signals || []).join(' ')}`.toLowerCase();
+  return /local-agent|terminal:zsh|terminal_command|git_activity|active_window|channel_desktop|local_agent/.test(text);
+}
+
+function pickActiveMemoryExpert(event?: EvolutionTimelineItem) {
+  const text = `${event?.type || ''} ${event?.summary || ''} ${(event?.signals || []).join(' ')}`.toLowerCase();
+  if (/command|validation|failed|tool_result/.test(text)) return 'validation';
+  if (/gep|capsule|mutation|remote_job_imported/.test(text)) return 'procedural';
+  if (/hook|browser|mobile|codex|claude|gemini/.test(text)) return 'episodic';
+  if (/tournament|gene|policy|reward/.test(text)) return 'policy';
+  return 'memory';
+}
+
+function memoryToneClass(tone: string) {
+  if (tone === 'mint') return 'text-[#8dffcc]';
+  if (tone === 'amber') return 'text-[#ffd166]';
+  return 'text-[#20e6ff]';
+}
+
 function hookTitle(event: EvolutionTimelineItem) {
   return `${hookSource(event)} · ${hookKind(event)}`;
 }
@@ -603,8 +1440,12 @@ function hookTitle(event: EvolutionTimelineItem) {
 function hookSource(event: EvolutionTimelineItem) {
   const leadingRoute = event.summary.match(/^([a-z0-9_-]+):([a-z0-9_-]+)/i);
   const fromMatch = event.summary.match(/from\s+([^\s]+)/i);
-  const source = leadingRoute?.[1] || fromMatch?.[1] || event.signals?.find((signal) => signal.startsWith('channel_')) || 'hook';
-  return source.replace(/^browser-extension:/, '').replace(/^channel_/, '').replace(/_/g, ' ');
+  const source = fromMatch?.[1] || leadingRoute?.[1] || event.signals?.find((signal) => signal.startsWith('channel_')) || 'hook';
+  return source
+    .replace(/^browser-extension:/, '')
+    .replace(/^local-agent:/, 'local ')
+    .replace(/^channel_/, '')
+    .replace(/[_:]/g, ' ');
 }
 
 function hookKind(event: EvolutionTimelineItem) {
@@ -625,6 +1466,7 @@ function hookDisplay(event: EvolutionTimelineItem | undefined, status: LiveStatu
     return {
       title: 'Waiting for signal',
       subtitle: `No hook yet · ${status}`,
+      compactMeta: status,
       channel: 'standby',
       kindLabel: 'next signal',
       preview: '等待 Codex、浏览器或手机端写入 hook，收到后这里会显示来源和内容摘要。'
@@ -641,10 +1483,21 @@ function hookDisplay(event: EvolutionTimelineItem | undefined, status: LiveStatu
   return {
     title: brand,
     subtitle: `${kind} · ${timeAgo(event.createdAt)}`,
+    compactMeta: `${compactHookKind(kind)} · ${timeAgo(event.createdAt)}`,
     channel,
     kindLabel: url ? 'captured link' : 'captured content',
     preview
   };
+}
+
+function compactHookKind(kind: string) {
+  const normalized = kind.toLowerCase();
+  if (normalized.includes('assistant')) return 'assistant';
+  if (normalized.includes('user')) return 'user';
+  if (normalized.includes('thread')) return 'thread';
+  if (normalized.includes('message')) return 'message';
+  if (normalized.includes('tool')) return 'tool';
+  return kind.split(/\s+/).slice(0, 2).join(' ');
 }
 
 function normalizeHookKind(kind: string, event: EvolutionTimelineItem) {
@@ -660,6 +1513,11 @@ function inferHookBrand(source: string, url: string | null) {
   if (host.includes('doubao.com')) return 'Doubao';
   if (host.includes('chatgpt.com')) return 'ChatGPT';
   if (host.includes('claude.ai')) return 'Claude';
+  if (host.includes('gemini.google.com')) return 'Gemini';
+  if (source.includes('gemini')) return 'Gemini';
+  if (source.includes('chatgpt')) return 'ChatGPT';
+  if (source.includes('claude')) return 'Claude';
+  if (source.includes('local') || source.includes('terminal') || source.includes('git') || source.includes('active window') || source.includes('desktop')) return 'Local Activity';
   if (source.includes('codex')) return 'Codex';
   if (source.includes('mobile')) return 'Mobile Chat';
   if (source.includes('browser')) return 'Browser';
