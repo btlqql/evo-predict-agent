@@ -268,6 +268,8 @@ export function MobileObserver() {
 
         <MemoryMoEPanel derived={derived} memoryRoute={model.memoryRoute} />
 
+        <EvolutionResultPanel derived={derived} memoryRoute={model.memoryRoute} />
+
         <section className="mt-4 overflow-hidden rounded-[30px] border border-white/[0.08] bg-white/[0.035] p-4 shadow-[0_28px_90px_rgba(0,0,0,0.42)]">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -469,7 +471,8 @@ function useDerivedState(state: EvolutionState | null, history: EvolutionHistory
       phase: state?.phase ?? 'strategy_decision',
       totalEvents: history?.totalTimeline ?? state?.timeline?.length ?? timeline.length,
       latestJobStatus: latestJob?.status,
-      embeddingStatus: jobs.some((job) => job.type === 'embedding_build' && job.status !== 'completed') ? 'building' : 'ready'
+      embeddingStatus: jobs.some((job) => job.type === 'embedding_build' && job.status !== 'completed') ? 'building' : 'ready',
+      nextStep: state?.nextStep
     };
   }, [history, state]);
 }
@@ -940,6 +943,201 @@ function MemoryMoEPanel({
       </div>
     </section>
   );
+}
+
+function EvolutionResultPanel({
+  derived,
+  memoryRoute
+}: {
+  derived: ReturnType<typeof useDerivedState>;
+  memoryRoute: MemoryRouteResponse | null;
+}) {
+  const result = buildEvolutionResult(derived, memoryRoute);
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-[28px] border border-[#8dffcc]/14 bg-[#07110f]/88 p-4 shadow-[0_26px_88px_rgba(141,255,204,0.08)]">
+      <div className="flex items-start justify-between gap-3">
+        <SectionHeader icon={<Zap />} title="Evolution Result" subtitle="before → feedback → mutation → after" />
+        <span className="rounded-full border border-[#8dffcc]/14 bg-[#8dffcc]/[0.055] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#8dffcc]/68">
+          {result.mode}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-stretch gap-2">
+        <BehaviorResultCard
+          label="Before"
+          title={result.beforeTitle}
+          body={result.beforeBody}
+          score={result.beforeScore}
+          tone="before"
+        />
+        <div className="flex flex-col items-center justify-center">
+          <span className="h-full w-px bg-gradient-to-b from-transparent via-white/[0.16] to-transparent" />
+          <span className="my-2 rounded-full border border-[#20e6ff]/18 bg-[#20e6ff]/[0.08] px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-[#20e6ff]/72">evolve</span>
+          <span className="h-full w-px bg-gradient-to-b from-transparent via-white/[0.16] to-transparent" />
+        </div>
+        <BehaviorResultCard
+          label="After"
+          title={result.afterTitle}
+          body={result.afterBody}
+          score={result.afterScore}
+          tone="after"
+        />
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/[0.06] bg-black/18 p-3">
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-[#ffd166]/18 bg-[#ffd166]/[0.07] text-[#ffd166]">
+            <RefreshCcw className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[9px] uppercase tracking-[0.18em] text-[#ffd166]/65">user feedback</p>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/62">{result.feedback}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2 grid gap-2">
+        <div className="rounded-2xl border border-[#20e6ff]/12 bg-[#20e6ff]/[0.045] p-3">
+          <p className="text-[9px] uppercase tracking-[0.18em] text-[#20e6ff]/62">mutation / next advisor</p>
+          <p className="mt-1 text-sm font-medium leading-6 text-white">{result.mutation}</p>
+          <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-white/42">{result.nextAdvisor}</p>
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {result.proofs.map((proof) => (
+            <div key={proof.label} className="min-w-0 rounded-xl border border-white/[0.06] bg-white/[0.03] px-2 py-2">
+              <p className="truncate text-[8px] uppercase tracking-[0.12em] text-white/24">{proof.label}</p>
+              <p className={`mt-1 truncate text-[11px] font-semibold ${proof.ok ? 'text-[#8dffcc]' : 'text-white/38'}`}>{proof.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BehaviorResultCard({
+  label,
+  title,
+  body,
+  score,
+  tone
+}: {
+  label: string;
+  title: string;
+  body: string;
+  score: number;
+  tone: 'before' | 'after';
+}) {
+  const isAfter = tone === 'after';
+  return (
+    <div className={`min-w-0 rounded-2xl border p-3 ${isAfter ? 'border-[#8dffcc]/16 bg-[#8dffcc]/[0.05]' : 'border-white/[0.07] bg-black/22'}`}>
+      <div className="flex items-center justify-between gap-2">
+        <p className={`text-[9px] uppercase tracking-[0.18em] ${isAfter ? 'text-[#8dffcc]/64' : 'text-white/28'}`}>{label}</p>
+        <p className={`text-xs font-semibold ${isAfter ? 'text-[#8dffcc]' : 'text-white/46'}`}>{pct(score)}</p>
+      </div>
+      <p className="mt-2 truncate text-sm font-semibold tracking-[-0.04em] text-white">{title}</p>
+      <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-white/46">{body}</p>
+    </div>
+  );
+}
+
+function buildEvolutionResult(
+  derived: ReturnType<typeof useDerivedState>,
+  memoryRoute: MemoryRouteResponse | null
+) {
+  const text = derived.timeline.map((item) => `${item.type} ${item.summary} ${(item.signals || []).join(' ')}`).join(' ').toLowerCase();
+  const feedbackEvent = derived.timeline.find((item) => /feedback|policy_reward|outcome|corrected|interrupted|undo|手机端反馈/i.test(`${item.type} ${item.summary}`));
+  const mutationEvent = derived.timeline.find((item) => /gep_assets_written|mutation|capsule|evolutionevent|remote_job_imported/i.test(`${item.type} ${item.summary}`));
+  const visible = derived.nextStep?.visibleEvolution;
+  const gep = memoryRoute?.gepProof;
+  const prefersConcise = /too_verbose|prefer_concise|啰嗦|更短|直接/.test(text);
+  const prefersFast = /too_slow|prefer_fast|更快/.test(text);
+  const prefersSafe = /too_risky|ask_before|冒进|先确认/.test(text);
+  const prefersDeep = /too_shallow|deeper|深入|太浅/.test(text);
+
+  const behavior = prefersSafe
+    ? {
+      beforeTitle: 'Over-Active Yes',
+      beforeBody: '推进太快，容易在高风险修改前跳过确认。',
+      afterTitle: 'Safe Yes',
+      afterBody: '遇到大改动、权限或不可逆操作时先确认，再执行。'
+    }
+    : prefersDeep
+      ? {
+        beforeTitle: 'Shallow Yes',
+        beforeBody: '只给表层方案，缺少证据、推理和可落地拆解。',
+        afterTitle: 'Research Yes',
+        afterBody: '先补证据和推理，再给可执行路径。'
+      }
+      : prefersFast || prefersConcise
+        ? {
+          beforeTitle: 'Architect Yes',
+          beforeBody: '先解释架构和方案，行动偏慢，文字密度偏高。',
+          afterTitle: 'Fast Yes',
+          afterBody: '少解释，先执行；完成后只汇报关键改动和验证结果。'
+        }
+        : {
+          beforeTitle: 'Generic Yes',
+          beforeBody: '按通用助手习惯回答，还没有完全贴合这个用户的工作方式。',
+          afterTitle: derived.activeGene.name,
+          afterBody: derived.activeGene.action
+        };
+
+  const beforeScore = clamp(
+    typeof feedbackEvent?.score === 'number' && feedbackEvent.score < 0.62
+      ? feedbackEvent.score
+      : derived.nextStep?.confidence
+        ? derived.nextStep.confidence - 0.22
+        : derived.yesness - 0.2,
+    0.18,
+    0.74
+  );
+  const afterScore = clamp(Math.max(derived.yesness, beforeScore + 0.18), beforeScore + 0.08, 0.96);
+  const mutation = derived.nextStep?.mutation
+    || derived.nextStep?.gepAsset?.mutation
+    || (prefersSafe
+      ? 'Mutation: high-risk execution must ask first for this user.'
+      : prefersDeep
+        ? 'Mutation: shallow answers are penalized; use deeper reasoning before action.'
+        : prefersFast || prefersConcise
+          ? 'Mutation: coding/product tasks should prefer direct execution and concise reporting.'
+          : `Mutation: strengthen ${derived.activeGene.name} when similar signals reappear.`);
+  const feedback = feedbackEvent?.summary
+    || visible?.proof
+    || (prefersConcise
+      ? '用户反馈：太啰嗦，下一次需要更短、更直接。'
+      : prefersFast
+        ? '用户反馈：推进太慢，下一次减少解释、更快执行。'
+        : '等待用户用反馈按钮给这次行为打分。');
+  const nextAdvisor = derived.nextStep?.nextStep
+    || visible?.after
+    || (prefersSafe
+      ? 'Next Advisor: before destructive or high-risk work, ask one concise confirmation.'
+      : prefersDeep
+        ? 'Next Advisor: include evidence, tradeoffs, and a concrete next action.'
+        : prefersFast || prefersConcise
+          ? 'Next Advisor: for code/UI tasks, execute first; final reply only summarize changed files and checks.'
+          : `Next Advisor: reuse ${derived.activeGene.name} unless feedback suggests a stronger gene.`);
+
+  return {
+    mode: mutationEvent || derived.nextStep?.gepAsset ? 'live proof' : 'ready',
+    beforeTitle: visible?.before ? 'Before' : behavior.beforeTitle,
+    beforeBody: visible?.before ?? behavior.beforeBody,
+    beforeScore,
+    feedback,
+    mutation,
+    afterTitle: visible?.after ? 'After' : behavior.afterTitle,
+    afterBody: visible?.after ?? behavior.afterBody,
+    afterScore,
+    nextAdvisor,
+    proofs: [
+      { label: 'Gene', value: derived.activeGene.name, ok: Boolean(derived.activeGene.id) },
+      { label: 'Mutation', value: mutationEvent || derived.nextStep?.mutation ? 'written' : 'pending', ok: Boolean(mutationEvent || derived.nextStep?.mutation) },
+      { label: 'Capsule', value: gep ? `${gep.capsules}` : (memoryRoute ? 'routed' : 'ready'), ok: Boolean((gep?.capsules ?? 0) > 0 || memoryRoute) },
+      { label: 'Event', value: gep ? `${gep.events}` : `${derived.totalEvents}`, ok: derived.totalEvents > 0 }
+    ]
+  };
 }
 
 function HookBeacon({ event, status }: { event?: EvolutionTimelineItem; status: LiveStatus }) {
